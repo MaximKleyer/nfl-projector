@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: nfl_projector_v1
+Version: 0.1.0
+Summary: Bottom-up NFL game prediction model. Projects player stat lines, aggregates to team production, derives game score.
+Requires-Python: >=3.10
+Requires-Dist: pandas>=2.0
+Requires-Dist: numpy>=1.24
+Requires-Dist: duckdb>=0.9
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: scipy>=1.10
