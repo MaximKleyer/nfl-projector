@@ -1,7 +1,9 @@
 # nfl_projector_v1 — Design Document
 
-**Status:** Draft for review. No code has been written yet.
+**Status:** v1 build complete (steps 1-11). Backtested on 2023-2025. CLI operational.
 **Goal:** Predict the final score of every scheduled NFL game per week, with ATS and OU picks derived from that prediction. Bottom-up architecture using projected player stat lines aggregated to team production.
+
+> **Naming note:** This project (`nfl_projector_v1`) is the current product going forward. The older codebase it replaced is considered **v0.5** — historical, parked, not used for comparison or development. References to "v2" in early sections of this document are an artifact of the rebuild conversation and refer to *this* project.
 
 ---
 
@@ -636,11 +638,52 @@ Estimated time across all steps: probably 5-8 messages of building + debugging. 
 
 ---
 
-## Questions to confirm before building begins
+## 10. Results & findings (post-build)
 
-1. **Does this match your mental model?** Anything missing? Anything you'd cut?
-2. **Are the league constants reasonable?** I'll verify them empirically before hard-coding, but the order of magnitude should look right.
-3. **Build order OK?** Or do you want a different starting point?
-4. **Anything you want to test/verify before we start (e.g., a manual sanity check on a known game)?**
+Backtested walk-forward over 2023-2025 (816 games), and over 2024-2025 (544 games) as the "fair" benchmark with prior-season history available.
 
-Read this. Push back on anything that feels off. Once you say "looks good, let's build," I'll start with step 1 (foundation files) and we go from there.
+### Benchmark — 2024+2025 (the honest number)
+
+| Metric | Value |
+|--------|-------|
+| Margin MAE | 10.79 |
+| Margin RMSE | 14.07 |
+| Total MAE | 10.78 |
+| SU accuracy | 58.8% |
+| ATS accuracy | 49.3% |
+| O/U accuracy | 47.3% |
+| Total bias | ~-1.8 points/game (slightly under) |
+
+2025 alone, after the depth-chart week-mapping fix: SU 58.3%, **ATS 53.9%**, margin MAE 10.82.
+
+### Key findings
+
+1. **Cold-start problem (most important).** The model needs ~1 full prior season of data to differentiate teams. 2023 (our first data year, no 2022 priors) performs at ~52-53% SU — essentially coin flip — because early-season player projections fall back to league averages and every team looks alike. 2024 and 2025, which have prior-season history, perform much better (59% and 58% SU). **Implication:** never trust the first season of any data window. Ingesting 2021-2022 (see Future Enhancements) would fix 2023.
+
+2. **Matches, doesn't beat, v0.5 on raw accuracy.** As predicted in Risk #6, margin MAE (~10.8) is in the same range as the old model (~10.5). The win was interpretability and personnel-change handling, not raw error reduction.
+
+3. **TD-per-yard rates were correct.** Empirically verified: pass 0.00606 (we used 0.0062), rush 0.00722 (we used 0.0072). No tuning needed. The early systematic under-projection of totals (-5 pts/game) was NOT a TD-conversion problem.
+
+4. **The -5 ppg total bias came from omissions, not conversion.** Adding a DST/ST scoring baseline (1.0 pt/team) and bumping the FG estimate (1.8 → 2.0) closed the bias from -5.0 to -1.8 ppg without touching margin or SU. The remaining ~1.8 is likely conservative yardage projection on backup-heavy rosters.
+
+5. **Depth-aware rush volume floor matters.** When a starting RB is missing, naive per-player projection under-counts team rushing badly (backups have thin, garbage-time histories). The depth-capped volume floor + 3.5 YPC floor (team.py) corrects this — e.g. LAC W14 2024 went from a nonsensical 32 rush yards to a realistic 81, cutting that game's margin error from 4.5 to 2.0.
+
+6. **nflverse changed depth-chart schemas in 2025.** The 2025 format dropped the `week` column and publishes near-daily snapshots (193 unique dates). Naively numbering them broke late-season roster lookups. Fixed by snapping each snapshot date to the correct NFL week via the schedule, keeping the latest snapshot per week. This fix alone bumped 2025 ATS from 50.4% to 53.9% — roster freshness matters most for spread picks.
+
+---
+
+## 11. Future enhancements (v2 / later)
+
+In rough priority order:
+
+1. **Ingest 2021-2022 data.** Highest-impact change. Would give 2023 a proper prior-season baseline and likely lift 2023 SU from ~53% to ~58%. Purely mechanical: same FPD CSV structure, re-run `build_database.py`. The 2022 depth charts use the legacy schema (no `dt` complication).
+
+2. **Cross-time team comparison.** A `compare` command to pit any two team-weeks against each other (e.g. "Week 14 2024 KC vs Week 10 2025 CLE"), projecting each against a neutral/league-average defense, then matching the two production profiles. Pure novelty/analysis feature.
+
+3. **Game-script awareness.** The biggest accuracy limitation. Backup QBs with inflated garbage-time stats (e.g. Winston 2024) over-project because the model can't tell "350 yards while trailing by 21" from "350 yards in a competitive game." Would need a way to down-weight stats accumulated in blowouts.
+
+4. **Team-specific FG rates.** Currently a flat league average (2.0). Teams that drive-but-stall (kick more FGs) vs teams that punch it in differ meaningfully. Requires FG data not currently in the warehouse.
+
+5. **Red-zone TD conversion rates.** Per-team RZ efficiency would replace the league-average TD-per-yard conversion, helping high-conversion teams (PHI, BAL) that we currently under-project.
+
+6. **QB cross-team history.** When a QB changes teams (e.g. Wilson DEN → PIT), we currently use his recent games regardless of team context. Could weight by scheme/team fit.
