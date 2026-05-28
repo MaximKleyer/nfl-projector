@@ -171,7 +171,7 @@ def _project_one_team(
     """Project a single team's production for one game."""
     # 1. Active roster
     from .data.depth_charts import get_depth_chart
-    dc = get_depth_chart(season, week)
+    dc = get_depth_chart(season, week, schedule=data.get("schedule"))
     roster: list[Player] = get_active_roster(
         team=team, season=season, week=week,
         depth_chart=dc,

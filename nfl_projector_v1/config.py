@@ -51,7 +51,9 @@ LEAGUE_AVG_RECV_YPT          = 8.03   # yards per target
 LEAGUE_AVG_RECV_YPR          = 12.10  # yards per reception
 LEAGUE_AVG_RECV_CATCH_RATE   = 68.1   # percent
 
-LEAGUE_AVG_TEAM_FGS_PER_GAME = 1.8
+LEAGUE_AVG_NON_OFFENSIVE_POINTS_PER_TEAM = 1.0  # DST TDs + ST TDs + safeties
+
+LEAGUE_AVG_TEAM_FGS_PER_GAME = 2.0
 
 # ---------------------------------------------------------------------------
 # Model knobs (tunable parameters of the projection logic itself)

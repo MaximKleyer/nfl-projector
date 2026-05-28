@@ -17,7 +17,7 @@ include them as a flat league-average bump.
 """
 from __future__ import annotations
 
-from ..config import POINTS_PER_TD_WITH_PAT, POINTS_PER_FG
+from ..config import POINTS_PER_TD_WITH_PAT, POINTS_PER_FG, LEAGUE_AVG_NON_OFFENSIVE_POINTS_PER_TEAM
 from .team import TeamProduction
 
 
@@ -35,4 +35,4 @@ def production_to_points(production: TeamProduction) -> float:
     """
     td_points = production.total_tds_implied * POINTS_PER_TD_WITH_PAT
     fg_points = production.field_goals * POINTS_PER_FG
-    return td_points + fg_points
+    return td_points + fg_points + LEAGUE_AVG_NON_OFFENSIVE_POINTS_PER_TEAM

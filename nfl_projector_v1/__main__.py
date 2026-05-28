@@ -1,13 +1,11 @@
-"""Entry point: `python -m nfl_projector_v1`.
+"""Entry point: `python -m nfl_projector_v1 <command> [options]`.
 
-Currently placeholder — CLI to be built in step 11.
+Delegates to the CLI in cli.py. Run with no arguments (or -h) to see
+available sub-commands: predict, backtest, refresh-depth-charts, status.
 """
 import sys
 
-def main():
-    print("nfl_projector_v1 — CLI not yet implemented.")
-    print("This package is under active development. See DESIGN.md for status.")
-    return 0
+from .cli import main
 
 if __name__ == "__main__":
     sys.exit(main())
