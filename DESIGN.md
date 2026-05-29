@@ -687,3 +687,14 @@ In rough priority order:
 5. **Red-zone TD conversion rates.** Per-team RZ efficiency would replace the league-average TD-per-yard conversion, helping high-conversion teams (PHI, BAL) that we currently under-project.
 
 6. **QB cross-team history.** When a QB changes teams (e.g. Wilson DEN → PIT), we currently use his recent games regardless of team context. Could weight by scheme/team fit.
+
+## Ingestion notes
+
+- **Washington 2021:** the v0.5 ingestion package (`nfl_projector/utils.py`,
+  outside this repo) requires "Washington Football Team" and "Football Team"
+  mapped to WAS. The 2021 franchise predates the Commanders rebrand. Applied
+  manually to the v0.5 team-normalizer; re-apply if rebuilding ingestion from
+  scratch.
+- **2021-2022 backtest result:** ingesting 2021-2022 lifted 2023 SU 52.6%?54.4%
+  and improved 2024/2025 modestly (+1-1.5 pts each) via more stable baselines.
+  Overall SU 56.1%?58.2%, margin MAE ~unchanged (10.98?10.93).
