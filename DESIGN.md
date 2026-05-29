@@ -5,6 +5,8 @@
 
 > **Naming note:** This project (`nfl_projector_v1`) is the current product going forward. The older codebase it replaced is considered **v0.5** — historical, parked, not used for comparison or development. References to "v2" in early sections of this document are an artifact of the rebuild conversation and refer to *this* project.
 
+> **Code-reconciliation note (updated 2026-05-29):** Sections 3–4 below were rewritten to match the **shipped code**, which diverged from the original pre-build spec. Key corrections: the CLI commands are `predict` / `backtest` / `refresh-depth-charts` / `status` (not `predict-week` / `compare` / `fetch-depth-charts`); there is no standalone `grade.py` or `compare.py` (grading lives inside `backtest.py`); a build-time `ingest/` package (and `scripts/`) that the spec omitted does the warehouse build; and the league constants in §4.1 now reflect the values actually committed in `config.py`. Sections 5–11 are the original design rationale, risks, and post-build results — left intact.
+
 ---
 
 ## 1. What the model produces
@@ -77,42 +79,55 @@ Output formats: console table for human reading, CSV for downstream use.
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+> **Code note:** STEP 4 in the shipped code also adds a flat **+1.0 non-offensive
+> points/team** (DST / ST) and uses a flat league-average FG rate (2.0/game). The
+> `team_points` line above shows the conceptual flow; the exact formula is in §4.10.
+
 ---
 
 ## 3. Directory structure
 
 ```
-nfl_projector_v1/
-├── README.md                  # User-facing docs
-├── pyproject.toml             # Package metadata, dependencies
-├── DESIGN.md                  # This document
-├── nfl_projector_v1/
+nfl_projector_v1/                 # repo root (git, pyproject, .venv)
+├── README.md
+├── pyproject.toml
+├── DESIGN.md                     # this document
+├── check_dc.py                   # standalone depth-chart sanity script
+├── nfl_projector_v1/             # the importable package
 │   ├── __init__.py
-│   ├── __main__.py            # Entry point: python -m nfl_projector_v1 ...
-│   ├── cli.py                 # CLI commands wiring
-│   ├── config.py              # League constants, paths, settings
-│   ├── data/
-│   │   ├── __init__.py
-│   │   ├── loaders.py         # Load DataFrames from warehouse
-│   │   ├── depth_charts.py    # Pull + cache nflverse depth charts
-│   │   └── roster.py          # Determine active roster for a team-week
-│   ├── projections/
-│   │   ├── __init__.py
-│   │   ├── base.py            # Shared helpers (weighted avg, matchup factor)
-│   │   ├── qb.py              # project_qb_line(qb, opp, week, history)
-│   │   ├── rb.py              # project_rb_line(rb, opp, week, history)
-│   │   ├── wr_te.py           # project_receiver_line(...)
-│   │   ├── team.py            # aggregate_to_team(...)
-│   │   └── points.py          # production_to_points(...)
-│   ├── game.py                # project_game(home, away, week, ...) → GamePrediction
-│   ├── grade.py               # Grade predictions vs actuals + Vegas
-│   ├── backtest.py            # Walk-forward backtest
-│   └── compare.py             # NEW: side-by-side v1-vs-v2 comparison
+│   ├── __main__.py               # entry point: python -m nfl_projector_v1 ...
+│   ├── cli.py                    # 4 subcommands: predict / backtest /
+│   │                             #   refresh-depth-charts / status
+│   ├── config.py                 # league constants, model knobs, path discovery
+│   ├── utils.py                  # name/team normalization, week-label parsing
+│   ├── game.py                   # project_game(home, away, season, week, data)
+│   ├── backtest.py               # walk_forward_backtest + grading + CSV output
+│   ├── ingest/                   # raw CSV → DuckDB warehouse (BUILD-TIME)
+│   │   ├── schemas.py            # REPORTS: per-file column schemas
+│   │   ├── readers.py            # read_report(): flat + wide-section CSV readers
+│   │   └── database.py           # build_warehouse(): discover weeks, load tables
+│   ├── data/                     # warehouse → DataFrames (RUN-TIME)
+│   │   ├── loaders.py            # load_all() and per-table loaders
+│   │   ├── depth_charts.py       # fetch/cache nflverse + get_depth_chart()
+│   │   └── roster.py             # get_active_roster() + Player dataclass
+│   └── projections/
+│       ├── base.py               # 4 shared helpers (weighted avg, blend,
+│       │                         #   opponent factor, injury factor)
+│       ├── qb.py                 # project_qb_line() → QBProjection
+│       ├── rb.py                 # project_rb_line() → RBProjection (rush + recv)
+│       ├── wr_te.py              # project_receiver_line() → ReceiverProjection
+│       ├── team.py               # aggregate_to_team() → TeamProduction
+│       └── points.py             # production_to_points()
 └── scripts/
-    └── fetch_depth_charts.py  # One-off pull of nflverse depth charts
+    ├── build_database.py         # CLI wrapper around ingest.build_warehouse
+    ├── fetch_external_data.py    # pull schedule / vegas / injuries
+    ├── rename_csvs.py            # normalize raw FPD CSV filenames
+    ├── incorporate_2021_2022.py  # backfill older seasons (see §11 #1)
+    └── update_receiving_with_rb.py  # one-off: add RBs to receiving table
 ```
 
-**Total estimated size:** ~1500 lines across ~15 files. About a third of the current v1's size (which is ~4500 lines).
+The package is deliberately small and dependency-light (pandas / numpy / duckdb /
+scipy / pyyaml). All model logic is plain functions — there is no ML training step.
 
 ---
 
@@ -123,33 +138,40 @@ nfl_projector_v1/
 Constants and league baselines. No logic, just values.
 
 ```python
-# League constants (computed empirically from 2023-2025 in the warehouse;
-# we'll verify these before hard-coding)
-LEAGUE_PASS_TD_PER_YARD = 0.0085   # ~2.7 pass TDs per 320 yds
-LEAGUE_RUSH_TD_PER_YARD = 0.012    # ~1.2 rush TDs per 100 yds
-POINTS_PER_TD_WITH_PAT  = 6.95     # 6 + 0.95 PAT (league kicker accuracy ~95%)
+# League scoring conversions (empirically verified, 2023-2025 weeks 1-18)
+LEAGUE_PASS_TD_PER_YARD = 0.0062   # 2352 pass TDs / 377,786 pass yds
+LEAGUE_RUSH_TD_PER_YARD = 0.0072   # 1098 rush TDs / 151,868 rush yds
+POINTS_PER_TD_WITH_PAT  = 6.95     # 6 + 0.95 PAT (missed XPs / 2pt average out)
 POINTS_PER_FG           = 3.0
-NFL_MARGIN_STD_DEV      = 13.5     # for win probability conversion
+NFL_MARGIN_STD_DEV      = 14.34    # std of (home-away); → win prob via normal CDF
+LEAGUE_AVG_TEAM_PPG     = 22.56    # sanity-check only, not used in projection
 
-# League averages for fallback when player has no history
-LEAGUE_AVG_QB_PASS_ATTEMPTS    = 32
-LEAGUE_AVG_QB_YPA              = 7.2
-LEAGUE_AVG_QB_COMP_PCT         = 64.0
-LEAGUE_AVG_RB_CARRIES_STARTER  = 14
-LEAGUE_AVG_RB_YPC              = 4.4
-LEAGUE_AVG_TARGETS_WR1         = 8.5
-LEAGUE_AVG_YPC_RECV            = 11.5
-LEAGUE_AVG_TEAM_FGS_PER_GAME   = 1.8
+# League position baselines (fallback when a player has no usable history)
+LEAGUE_AVG_QB_PASS_ATTEMPTS = 32.7
+LEAGUE_AVG_QB_COMP_PCT      = 64.9
+LEAGUE_AVG_QB_YPA           = 7.14
+LEAGUE_AVG_QB_SCRAMBLES     = 1.9
+LEAGUE_AVG_RB_CARRIES_STARTER = 15.7
+LEAGUE_AVG_RB_YPC             = 4.35
+LEAGUE_AVG_RECV_YPT         = 8.03    # yards per target
+LEAGUE_AVG_RECV_YPR         = 12.10   # yards per reception
+LEAGUE_AVG_RECV_CATCH_RATE  = 68.1    # percent
+LEAGUE_AVG_NON_OFFENSIVE_POINTS_PER_TEAM = 1.0   # DST + ST TDs + safeties
+LEAGUE_AVG_TEAM_FGS_PER_GAME = 2.0
 
 # Model knobs
-RECENT_GAMES_WINDOW = 4   # "last 4 games" heavy weight
-RECENT_WEIGHT       = 0.7 # 70% recent, 30% season baseline
-INJURY_MULTIPLIERS  = {"Questionable": 0.85, "Doubtful": 0.30,
-                       "Out": 0.0, "IR": 0.0}
+RECENT_GAMES_WINDOW = 4      # "recent form" window
+RECENT_WEIGHT       = 0.7    # weight on recent vs season baseline (when sample full)
+MATCHUP_FLOOR       = 0.85   # opponent-factor caps (tight on purpose — wider
+MATCHUP_CEILING     = 1.15   #   caps overshot at the extremes in testing)
+INJURY_MULTIPLIERS  = {"Out": 0.0, "IR": 0.0, "Doubtful": 0.30,
+                       "Questionable": 0.85}   # anything else → 1.0
+RECEIVER_YARDS_CAP  = 280.0  # sanity cap on allocated single-game receiving yds
 
-# Paths
-DEFAULT_WAREHOUSE = "data/processed/warehouse.duckdb"  # reuses v1's warehouse
-DEFAULT_OUTPUTS   = "data/processed/v2"
+# Paths — auto-discovered by walking up/sideways for data/processed/warehouse.duckdb
+DEFAULT_WAREHOUSE_PATH  = <discovered>/data/processed/warehouse.duckdb
+DEFAULT_OUTPUT_DIR      = <root>/data/processed/v2
+DEFAULT_DEPTH_CHART_DIR = <root>/data/raw/depth_charts
 ```
 
 ### 4.2 `data/loaders.py`
@@ -157,12 +179,27 @@ DEFAULT_OUTPUTS   = "data/processed/v2"
 Pure data access. No logic. Functions return clean DataFrames from the existing warehouse.
 
 ```python
-def load_schedule(con) -> pd.DataFrame: ...
-def load_vegas(con) -> pd.DataFrame: ...
-def load_injuries(con) -> pd.DataFrame: ...
-def load_player_history(con, position: str) -> pd.DataFrame: ...
-def load_defense_stats(con, side: str) -> pd.DataFrame: ...
-   # side ∈ {"pass", "rush", "recv"}
+def open_warehouse(path=None) -> duckdb connection   # read-only
+
+# nflverse tables
+def load_schedule(con) -> pd.DataFrame
+def load_vegas(con)    -> pd.DataFrame | None
+def load_injuries(con) -> pd.DataFrame | None
+
+# FPD player game logs (one row per player-game)
+def load_qb_history(con)       -> pd.DataFrame   # advanced_passing_player
+def load_rb_history(con)       -> pd.DataFrame   # advanced_rushing_player (all rushers)
+def load_receiver_history(con) -> pd.DataFrame   # advanced_receiving_player (WR/TE/RB)
+
+# defense game logs
+def load_pass_defense(con) -> pd.DataFrame   # advanced_passing_def
+def load_rush_defense(con) -> pd.DataFrame   # advanced_rushing_def
+def load_recv_defense(con) -> pd.DataFrame   # advanced_receiving_def
+
+# One-shot convenience used by game.py / backtest.py:
+def load_all(warehouse_path=None) -> dict
+#   keys: schedule, vegas, injuries, qb_history, rb_history, recv_history,
+#         pass_defense, rush_defense, recv_defense
 ```
 
 ### 4.3 `data/depth_charts.py`
@@ -170,12 +207,20 @@ def load_defense_stats(con, side: str) -> pd.DataFrame: ...
 Pulls weekly depth charts from nflverse. Caches per (season, week) to avoid re-downloading.
 
 ```python
-def fetch_depth_chart(season: int, week: int) -> pd.DataFrame:
-    """
-    Returns: player_name, team, position, depth_order
-    Cached at data/raw/depth_charts/{season}_{week}.csv
-    """
-    ...
+def fetch_depth_charts_season(season, refresh=False) -> pd.DataFrame:
+    """Download (or read cached) the full nflverse depth-chart CSV for a season.
+    Cached at data/raw/depth_charts/depth_charts_{season}.csv."""
+
+def get_depth_chart(season, week, schedule=None) -> pd.DataFrame:
+    """Normalized depth chart for ONE (season, week):
+        columns = season, week, team, player_name, position, depth_order
+    Handles BOTH nflverse schemas:
+      - legacy 2023-2024 (club_code / full_name / depth_team / week)
+      - new 2025+ (team / player_name / pos_abb / pos_rank / dt, NO week column).
+    For 2025+, snapshot dates are snapped to NFL weeks via `schedule`, keeping the
+    LATEST snapshot per (season, week, team). Pass `schedule` for 2025+ — without
+    it, week numbering falls back to a crude (often wrong) heuristic. The
+    normalized full season is cached at module level for cheap per-week reads."""
 ```
 
 ### 4.4 `data/roster.py`
@@ -183,69 +228,63 @@ def fetch_depth_chart(season: int, week: int) -> pd.DataFrame:
 Combines depth chart with recent activity to identify the projection roster.
 
 ```python
+@dataclass
+class Player:
+    name: str
+    team: str
+    position: str        # 'QB' | 'RB' | 'WR' | 'TE'
+    depth_order: int     # 1 = starter, 2 = backup, ...
+    injury_status: str | None = None
+
+# Per-position depth limits actually projected (ROSTER_DEPTH_LIMITS):
+#   QB 1, RB 3, WR 4, TE 2
+
 def get_active_roster(
-    team: str,
-    season: int,
-    week: int,
-    depth_chart: pd.DataFrame,
-    player_history: pd.DataFrame,
-    injuries: pd.DataFrame,
+    team, season, week,
+    depth_chart,                       # normalized output of get_depth_chart()
+    qb_history, rb_history, recv_history,
+    injuries_df=None,
+    enforce_activity_filter=True,      # set False for week 1 / no history
 ) -> list[Player]:
-    """
-    Returns the list of players to project for this team-week.
-    
-    Logic:
-      1. Start with depth chart for (team, season, week)
-      2. Filter to QB / RB / WR / TE (offense only)
-      3. Drop players marked 'Out' or 'IR' in injury data
-      4. For each remaining player, verify they had touches in the
-         last 4 games (drops players listed but inactive)
-      5. Return list with each player tagged starter/backup based on
-         depth order
-    """
+    """1. Slice the depth chart to `team`; take top-N per position.
+       2. Drop players whose injury report_status is Out/IR.
+       3. If enforce_activity_filter: drop players with no touches in the last
+          ~4 weeks (prior season also counts in weeks <= 4). This catches IR
+          players who stopped appearing on weekly injury reports.
+       Returns Player objects sorted by position then depth_order."""
     ...
 ```
 
-A `Player` is a lightweight dataclass: `{name, position, depth, status}`.
+The activity filter is what keeps depth-chart-listed-but-not-actually-playing
+players (practice squad, quietly-injured) out of the projection.
 
 ### 4.5 `projections/base.py`
 
 Shared helpers used by all position-specific projection modules.
 
 ```python
-def weighted_recent_average(
-    games: pd.DataFrame,
-    stat: str,
-    n_recent: int = 4,
-    decay: float = 1.0,
-) -> float:
-    """Weighted mean of `stat` over last n games. decay=1.0 means equal weight."""
+def weighted_recent_average(games, stat, n_recent=4, decay=1.0) -> float | None:
+    """Mean of `stat` over the player's last n_recent games. Caller must pre-filter
+    to ONE player and sort oldest→newest. decay>1 weights recent games more."""
     ...
 
-def blend_with_baseline(
-    recent_value: float,
-    season_baseline: float,
-    n_recent_games: int,
-    recent_weight: float = 0.7,
-) -> float:
-    """Bayesian-style blend.
-    If recent sample is small, season baseline dominates.
-    If recent sample is full (4 games), recent_value gets the heavier weight.
-    """
+def blend_with_baseline(recent_value, season_baseline, n_recent_games,
+                        recent_weight=RECENT_WEIGHT, league_baseline=None,
+                        min_recent_games=2) -> float | None:
+    """Bayesian-style blend. The recent weight is scaled by sample completeness
+    (n_recent_games / 4), so a 2-game sample leans toward the season baseline.
+    Falls back recent → season → league → None."""
     ...
 
-def opponent_factor(
-    opponent_recent_allowed: float,
-    league_avg_allowed: float,
-    floor: float = 0.85,
-    ceiling: float = 1.15,
-) -> float:
-    """Matchup multiplier from opponent vs-position stats."""
+def opponent_factor(opp_recent_allowed, league_avg_allowed,
+                    floor=MATCHUP_FLOOR, ceiling=MATCHUP_CEILING) -> float:
+    """opp_recent_allowed / league_avg_allowed, clamped to [0.85, 1.15].
+    Returns 1.0 if either input is missing."""
     ...
 
-def injury_factor(player_name: str, team: str, season: int, week: int,
-                  injuries_df: pd.DataFrame) -> float:
-    """Look up player's injury status, return multiplier from INJURY_MULTIPLIERS."""
+def injury_factor(player_name, team, season, week, injuries_df) -> float:
+    """Look up report_status in the injuries table → INJURY_MULTIPLIERS.
+    Unmatched / unknown status → 1.0 (treat as healthy — safer than zeroing)."""
     ...
 ```
 
@@ -254,38 +293,29 @@ def injury_factor(player_name: str, team: str, season: int, week: int,
 ```python
 @dataclass
 class QBProjection:
-    name: str
-    team: str
+    name: str; team: str; opponent: str
     pass_attempts: float
+    completions: float
     completion_pct: float
-    pass_yards: float           # the team passing anchor
-    pass_tds: float             # later computed via team conversion, but tracked here
+    ypa: float
+    pass_yards: float            # pass_attempts × ypa — the team passing anchor
     interceptions: float
     sack_count: float
-    scramble_yards: float       # tracked SEPARATELY from team rushing (your call)
+    scramble_yards: float        # tracked SEPARATELY; team.py folds it into rushing
+    # diagnostics:
+    n_recent_games: int
+    health_multiplier: float
+    matchup_multiplier_yards: float
 
 
-def project_qb_line(
-    qb: Player,
-    opponent: str,
-    season: int,
-    week: int,
-    qb_history: pd.DataFrame,
-    pass_defense: pd.DataFrame,
-    injuries: pd.DataFrame,
-) -> QBProjection:
-    """Project the starting QB's stat line.
-    
-    For each stat (attempts, comp_pct, ypa, scrambles):
-      1. weighted_recent = weighted_recent_average(qb's last 4 games)
-      2. season_baseline = qb's season-to-date mean
-      3. own_estimate = blend_with_baseline(recent, season, n_games)
-      4. opp_factor for the appropriate defensive stat
-      5. inj_factor = injury_factor(...)
-      6. projected_stat = own_estimate × opp_factor × inj_factor
-    
-    pass_yards = pass_attempts × ypa (with comp_pct applied to attempts that complete)
-    """
+def project_qb_line(qb: Player, opponent, season, week, qb_history,
+                    pass_defense=None, injuries_df=None) -> QBProjection:
+    """Project each base stat (pass_att, cmp_pct, ypa, scrambles, ints, sacks) via
+    blend(weighted_recent, season) with league fallback, then apply the matchup +
+    injury multipliers. History is filtered STRICTLY before (season, week) —
+    walk-forward correct. pass_yards = attempts × ypa. Per design, the yards
+    matchup uses ypa-allowed only (attempts are game-script driven, not defense).
+    TDs are NOT projected here — derived at team level (see points.py)."""
     ...
 ```
 
@@ -294,30 +324,24 @@ def project_qb_line(
 ```python
 @dataclass
 class RBProjection:
-    name: str
-    team: str
-    carries: float
-    rush_yards: float
-    targets: float                # for receiving allocation
-    receiving_yards: float        # filled in by receiver step
-    is_starter: bool              # for snap-share weighting in allocation
+    name: str; team: str; opponent: str
+    carries: float; ypc: float; rush_yards: float
+    # receiving (populated when recv_history is passed AND the RB has rec history;
+    #   receiving_yards/receptions are filled later by team.py allocation):
+    target_share: float = 0.0; ypt: float = 0.0; catch_rate: float = 0.0
+    receiving_yards: float = 0.0; receptions: float = 0.0
+    depth_order: int = 1          # used by team.py for depth-aware volume scaling
+    # diagnostics: n_recent_games, health_multiplier, matchup_multiplier
 
 
-def project_rb_line(
-    rb: Player,
-    opponent: str,
-    season: int,
-    week: int,
-    rb_history: pd.DataFrame,
-    rush_defense: pd.DataFrame,
-    injuries: pd.DataFrame,
-) -> RBProjection:
-    """Project an RB's stat line.
-    
-    carries: weighted_recent → blend → opp_factor → injury_factor
-    rush_yards: carries × ypc (with same blend logic)
-    targets: weighted_recent target share, for allocation
-    """
+def project_rb_line(rb: Player, opponent, season, week, rb_history,
+                    rush_defense=None, injuries_df=None, recv_history=None) -> RBProjection:
+    """Rushing: carries (depth-scaled baseline — backups get ~45%, third-string
+    ~18% of a starter's load) and ypc via the standard recipe; matchup hits ypc.
+    Receiving: if recv_history is given and the RB has RB-position receiving rows,
+    project target_share / ypt / catch_rate (receiving yards filled by team.py).
+    The RB receiving fields exist because the receiving table was later updated to
+    include RBs — see scripts/update_receiving_with_rb.py and §4.16."""
     ...
 ```
 
@@ -326,29 +350,23 @@ def project_rb_line(
 ```python
 @dataclass
 class ReceiverProjection:
-    name: str
-    team: str
-    position: str            # 'WR' or 'TE'
-    target_share: float      # fraction of team targets they get
-    receptions: float
-    receiving_yards: float   # filled in by team allocation step
+    name: str; team: str; opponent: str
+    position: str               # 'WR' | 'TE'
+    target_share: float         # PERCENT of team targets (e.g. 22.5)
+    ypt: float                  # used as the allocation weight in team.py
+    catch_rate: float
+    receiving_yards: float = 0.0   # filled by team.py allocation
+    receptions: float = 0.0
+    # diagnostics: n_recent_games, health_multiplier, matchup_multiplier
 
 
-def project_receiver_target_share(
-    receiver: Player,
-    opponent: str,
-    season: int,
-    week: int,
-    recv_history: pd.DataFrame,
-    recv_defense: pd.DataFrame,
-    injuries: pd.DataFrame,
-) -> ReceiverProjection:
-    """Project receiver's TARGET SHARE only.
-    
-    Actual yards filled in later by team.py during allocation.
-    
-    target_share: weighted_recent → blend → minor opp adjustment
-    """
+def project_receiver_line(receiver: Player, opponent, season, week, recv_history,
+                          recv_defense=None, injuries_df=None) -> ReceiverProjection:
+    """Project target_share, ypt, catch_rate (NOT yards). Depth/position-based
+    target-share fallbacks (WR1 22%, WR2 16%, slot 11%, TE1 14%, ...). Matchup
+    adjusts ypt (vs def_yprr); target_share is treated as neutral to defense.
+    Receiving YARDS are allocated later in team.py from the QB's pass-yard total,
+    so receivers' yards always sum to the QB anchor."""
     ...
 ```
 
@@ -359,35 +377,28 @@ The aggregation logic. Brings together all player projections into team-level nu
 ```python
 @dataclass
 class TeamProduction:
-    team: str
-    pass_yards: float
-    rush_yards: float
-    pass_tds_implied: float     # from yards × league rate
-    rush_tds_implied: float     # from yards × league rate
-    field_goals: float
-    receiver_lines: list[ReceiverProjection]  # for debugging / interp
+    team: str; opponent: str
+    pass_yards: float            # = QB pass_yards (anchor)
+    rush_yards: float            # = Σ RB rush_yards + QB scramble_yards
+    total_yards: float
+    pass_tds_implied: float; rush_tds_implied: float; total_tds_implied: float
+    field_goals: float           # flat league avg in v1 (placeholder)
+    # retained for interpretability: qb_projection, rb_projections,
+    #   receiver_projections; plus diagnostics (n_receivers, rush_volume_scaling)
 
 
-def aggregate_to_team(
-    qb_proj: QBProjection,
-    rb_projs: list[RBProjection],
-    recv_projs: list[ReceiverProjection],
-    team_recent_fgs: float,
-) -> TeamProduction:
-    """Aggregate all player projections into team production.
-    
-    Steps:
-      1. team_pass_yards = qb_proj.pass_yards  (the QB-anchored decision)
-      2. allocate pass_yards across receivers (WR + TE + RB) by target share
-         - normalize target shares so they sum to 1.0
-         - each player's receiving_yards = team_pass_yards × normalized_share
-         - cap receiver yards at reasonable maximum (e.g., 250 yards)
-      3. team_rush_yards = sum(rb.rush_yards for rb in rb_projs) + qb_proj.scramble_yards
-      4. compute implied TDs from yards × league rate
-      5. field_goals = team_recent_fgs (passed in from rolling stat)
-    
-    Returns a TeamProduction summarizing the whole offensive output.
-    """
+def aggregate_to_team(qb_proj, rb_projs, receiver_projs, team, opponent,
+                      season, week, schedule_df=None, rb_history=None) -> TeamProduction:
+    """MUTATES receiving_yards/receptions on the projections passed in.
+      1. team_pass_yards = qb_proj.pass_yards.
+      2. Allocate pass yards across the WR+TE+RB pool by efficiency-weighted
+         share (normalized target_share × ypt), capped at RECEIVER_YARDS_CAP.
+      3. Depth-aware rush-volume floor: if Σ projected carries < 90% of the team's
+         recent carries/game, redistribute the deficit up to per-depth caps
+         (d1 22 / d2 16 / d3 12 / d4+ 8) and apply a 3.5 YPC floor to any backup
+         whose volume got promoted. (Fixes backup-RB under-projection — §10 #5.)
+      4. team_rush_yards = Σ RB rush + QB scrambles.
+      5. implied TDs = yards × league TD-per-yard; FGs = league avg (placeholder)."""
     ...
 ```
 
@@ -396,12 +407,14 @@ def aggregate_to_team(
 The TD-and-FG-to-points conversion.
 
 ```python
-def production_to_points(prod: TeamProduction) -> float:
-    """Convert team production into expected points.
-    
-    points = (pass_tds + rush_tds) × POINTS_PER_TD_WITH_PAT
-           + field_goals × POINTS_PER_FG
-    """
+def production_to_points(production: TeamProduction) -> float:
+    """points = total_tds_implied × 6.95
+             + field_goals × 3.0
+             + 1.0   (LEAGUE_AVG_NON_OFFENSIVE_POINTS_PER_TEAM — DST/ST baseline)
+
+    The flat +1.0 non-offensive baseline was added POST-BUILD to close a
+    systematic total-points under-bias (originally this returned only TD + FG
+    points). See §10 finding #4."""
     ...
 ```
 
@@ -412,66 +425,48 @@ The orchestrator. One function call → one game prediction.
 ```python
 @dataclass
 class GamePrediction:
-    home_team: str
-    away_team: str
-    season: int
-    week: int
-    
-    # Core predictions
-    predicted_home_score: float
-    predicted_away_score: float
+    home_team: str; away_team: str; season: int; week: int
+    predicted_home_score: float; predicted_away_score: float
     predicted_margin: float       # home - away
-    predicted_total: float        # home + away
-    
-    # Derived metrics (Vegas-based, only if line available)
-    spread_close: Optional[float]
-    total_close: Optional[float]
-    ats_pick: Optional[str]
-    ats_prob: Optional[float]
-    ou_pick: Optional[str]
-    ou_prob: Optional[float]
+    predicted_total: float
     su_pick: str
-    win_prob_home: float
-    
-    # Full breakdown for interpretation
-    home_production: TeamProduction
-    away_production: TeamProduction
+    win_prob_home: float; win_prob_away: float
+    # Vegas-derived (None if no line found for this game_id):
+    spread_close: float | None; total_close: float | None
+    ats_pick: str | None; ats_prob: float | None
+    ou_pick: str | None;  ou_prob: float | None
+    home_production: TeamProduction | None
+    away_production: TeamProduction | None
 
 
-def project_game(
-    home: str,
-    away: str,
-    season: int,
-    week: int,
-    # All needed data passed in as DataFrames:
-    schedule, vegas, injuries, depth_charts,
-    qb_history, rb_history, recv_history,
-    pass_defense, rush_defense, recv_defense,
-) -> GamePrediction:
-    """Project a single game end-to-end.
-    
-    For each team:
-      1. Get active roster
-      2. Project QB, all RBs, all receivers
-      3. Aggregate to team production
-      4. Convert to points
-    
-    Then compute derived metrics and return GamePrediction.
-    """
+def project_game(home_team, away_team, season, week, data: dict,
+                 enforce_activity_filter=True) -> GamePrediction:
+    """`data` is the dict from loaders.load_all(). For each team: build roster →
+    project QB / RBs / receivers → aggregate_to_team → production_to_points. Then
+    margin/total, win prob (normal CDF, σ≈14.34), SU pick. If a Vegas line is
+    found (game_id '{season}_{week:02d}_{away}_{home}', negative spread = home
+    favored), derive ATS + O/U picks — Vegas is used only here, never to anchor.
+
+    NOTE: the signature is (home, away, season, week, data) — a single data dict,
+    not ten DataFrame arguments. game.py is pure orchestration; the projection
+    modules each filter `data` to the rows they need."""
     ...
 ```
 
-### 4.12 `grade.py`
+### 4.12 Grading (lives in `backtest.py`, not a separate module)
 
-Grades predictions against actuals. Used by both the live workflow and the backtest.
+There is no standalone `grade.py`. Grading is done by private helpers inside
+`backtest.py`:
 
 ```python
-def grade_prediction(pred: GamePrediction, actual_home: float, actual_away: float) -> dict:
-    """Return per-game grade dict with margin_error, su_correct, ats_correct, ou_correct."""
+def _grade_prediction(pred, actual_home_score, actual_away_score) -> dict:
+    """One residuals row: margin/total error, su_correct, ats_correct (+ats_push),
+    ou_correct (+ou_push). Ties and pushes are excluded from accuracy, not blamed."""
     ...
 
-def summarize_grades(grades: list[dict]) -> pd.DataFrame:
-    """Aggregate to MAE, SU accuracy, ATS accuracy, OU accuracy."""
+def _summarize(residuals, label="all") -> dict:
+    """Aggregate to margin/total MAE + RMSE and SU / ATS / O-U accuracy (with
+    per-metric game counts)."""
     ...
 ```
 
@@ -480,58 +475,82 @@ def summarize_grades(grades: list[dict]) -> pd.DataFrame:
 The walk-forward harness for v2.
 
 ```python
-def walk_forward_backtest(
-    test_seasons: list[int],
-    min_week: int = 1,
-    max_week: int = 18,
-    warehouse_path: str = DEFAULT_WAREHOUSE,
-    verbose: bool = True,
-) -> BacktestResult:
-    """Walk-forward backtest of v2 across given seasons.
-    
-    For each (season, week, game):
-      1. Load all data filtered to STRICTLY before (season, week) — no leakage
-      2. Run project_game(...)
-      3. Grade against actual final scores
-    
-    Returns: residuals DataFrame, summary table, per-season breakdown.
-    """
+@dataclass
+class BacktestResult:
+    residuals: pd.DataFrame          # one row per graded game
+    summary: pd.DataFrame            # overall metrics
+    summary_by_season: pd.DataFrame  # per-season breakdown
+
+
+def walk_forward_backtest(seasons, min_week=1, max_week=18, data=None,
+                          warehouse_path=None, verbose=True) -> BacktestResult:
+    """Iterate every COMPLETED game in the window and call project_game (which
+    enforces walk-forward history filtering internally — no leakage), then grade
+    vs the actual scores. Loads data via load_all() unless a pre-loaded `data`
+    dict is passed (cheaper for repeated runs)."""
+    ...
+
+
+def write_backtest_outputs(result, out_dir=None, suffix="") -> dict[str, Path]:
+    """Write CSVs to DEFAULT_OUTPUT_DIR (data/processed/v2/):
+        backtest_residuals{suffix}.csv
+        backtest_summary{suffix}.csv
+        backtest_summary_by_season{suffix}.csv"""
     ...
 ```
 
-### 4.14 `compare.py`
+### 4.14 `compare.py` — not implemented
 
-The side-by-side v1 vs v2 comparison script.
-
-```python
-def compare_backtests(
-    v1_residuals_path: str = "data/processed/team_backtest_residuals.parquet",
-    v2_residuals_path: str = "data/processed/v2/backtest_residuals.parquet",
-) -> pd.DataFrame:
-    """Load both backtests, join on game_id, output a side-by-side comparison."""
-    ...
-```
-
-Output:
-
-```
-                 v1_naive  v1_points_only  v1_fpd_aware  v2_bottom_up
-margin_mae         11.09         10.43          10.52         <tbd>
-su_accuracy        54.2%         62.5%          63.7%         <tbd>
-ats_accuracy       48.8%         49.2%          50.8%         <tbd>
-n_games            816           816            816            816
-```
+The original spec planned a `compare.py` for a side-by-side table against the old
+v0.5 model. It was never built, and there is no `compare` CLI command. The old
+v0.5 backtest residuals still live at
+`data/processed/team_backtest_residuals.parquet` if a manual comparison is ever
+wanted; the cross-time team-comparison idea is tracked as deferred work in §11 #2.
 
 ### 4.15 `cli.py`
 
 The CLI commands. Mirrors v1's structure but with fewer commands (no calibrate, no season-sim, no team-backtest variants, no track-results for v1 — all deferred).
 
 ```
-python -m nfl_projector_v1 predict-week --season 2026 --week 5
-python -m nfl_projector_v1 backtest --test-seasons 2023 2024 2025
-python -m nfl_projector_v1 compare    # runs compare_backtests
-python -m nfl_projector_v1 fetch-depth-charts --seasons 2023 2024 2025
+python -m nfl_projector_v1 status
+python -m nfl_projector_v1 predict --season 2025 --week 16
+python -m nfl_projector_v1 backtest --seasons 2024 2025 [--min-week N --max-week N --suffix S]
+python -m nfl_projector_v1 refresh-depth-charts --seasons 2025
 ```
+
+---
+
+### 4.16 Ingestion: `ingest/` package + `scripts/`
+
+The original spec omitted the build-time ingestion layer. The warehouse is built
+*offline* (not during prediction) from raw FPD CSVs:
+
+- `ingest/schemas.py` — `REPORTS`: per-file column schemas (which raw columns map
+  to canonical names; which files are flat vs "wide" multi-section reports).
+- `ingest/readers.py` — `read_report()`: turns a raw FPD CSV into a clean
+  long-format DataFrame. Handles wide reports that repeat column groups across
+  TOTAL / MAN / ZONE / SHELL sections. Emits season, week_label, week_num,
+  week_type and a player_key / team_key.
+- `ingest/database.py` — `build_warehouse()`: discovers weeks under
+  `data/raw/<season>/week_NN/`, reads each report, and writes the DuckDB tables
+  the loaders read (schedule, vegas, injuries, advanced_passing_player,
+  advanced_rushing_player, advanced_receiving_player,
+  advanced_{passing,rushing,receiving}_def). Missing files are skipped with a
+  warning, not an error — the model degrades gracefully.
+- `utils.py` — `normalize_name`, `normalize_team`, `player_key`,
+  `label_to_week_number` (shared by the readers).
+
+Build pipeline (run in order, only when rebuilding the warehouse):
+
+```
+scripts/rename_csvs.py                                # normalize raw FPD filenames
+scripts/fetch_external_data.py                        # pull schedule / vegas / injuries
+scripts/build_database.py --seasons 2023 2024 2025    # → warehouse.duckdb
+```
+
+`scripts/incorporate_2021_2022.py` backfills the older seasons (§11 #1);
+`scripts/update_receiving_with_rb.py` was the one-off that added RB rows to the
+receiving table (which is why `RBProjection` now carries receiving stats).
 
 ---
 
@@ -542,7 +561,7 @@ python -m nfl_projector_v1 fetch-depth-charts --seasons 2023 2024 2025
 1. **Bottom-up architecture** — players first, team is the sum
 2. **QB-anchored passing yards** — receiver yards allocate from QB total
 3. **TD-per-yard conversion** — league-average rates, not per-player TD projection
-4. **Team rolling FGs/game** — kicker variance deferred to v2+
+4. **Team FGs** — shipped as a flat league average (2.0/game); the per-team rolling version is a stubbed placeholder in `team.py`, kicker variance deferred to v2+
 5. **No multiplicative blocks** — each player stat: blended baseline × opp factor × injury factor (just two adjustments, no stacking of 4-5)
 6. **No fantasy points in the model** — production is yards/TDs, never converted to FP internally
 7. **Vegas used only for grading** — not for anchoring projections
@@ -556,7 +575,8 @@ python -m nfl_projector_v1 fetch-depth-charts --seasons 2023 2024 2025
 - Season simulator
 - Snap share data
 - Kicker-level data
-- DST / special teams TDs
+- DST / special teams TDs as modeled events (a flat **+1.0 non-offensive
+  points/team** baseline *was* added post-build — see §10 finding #4)
 - 2pt conversions / safeties (use league average constant)
 - Coverage scheme adjustments
 - SOS adjustment
@@ -588,7 +608,8 @@ For each test_season in [2023, 2024, 2025]:
 Aggregate: residuals → summary table (MAE, SU acc, ATS acc, OU acc)
 ```
 
-Output to `data/processed/v2/backtest_residuals.parquet` and `data/processed/v2/backtest_summary.csv`.
+Output (CSV) to `data/processed/v2/`: `backtest_residuals.csv`, `backtest_summary.csv`,
+and `backtest_summary_by_season.csv` (an optional `--suffix` is appended to each name).
 
 ---
 
@@ -687,3 +708,14 @@ In rough priority order:
 5. **Red-zone TD conversion rates.** Per-team RZ efficiency would replace the league-average TD-per-yard conversion, helping high-conversion teams (PHI, BAL) that we currently under-project.
 
 6. **QB cross-team history.** When a QB changes teams (e.g. Wilson DEN → PIT), we currently use his recent games regardless of team context. Could weight by scheme/team fit.
+
+## Ingestion notes
+
+- **Washington 2021:** the v0.5 ingestion package (`nfl_projector/utils.py`,
+  outside this repo) requires "Washington Football Team" and "Football Team"
+  mapped to WAS. The 2021 franchise predates the Commanders rebrand. Applied
+  manually to the v0.5 team-normalizer; re-apply if rebuilding ingestion from
+  scratch.
+- **2021-2022 backtest result:** ingesting 2021-2022 lifted 2023 SU 52.6%?54.4%
+  and improved 2024/2025 modestly (+1-1.5 pts each) via more stable baselines.
+  Overall SU 56.1%?58.2%, margin MAE ~unchanged (10.98?10.93).
