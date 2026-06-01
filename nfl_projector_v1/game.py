@@ -22,7 +22,7 @@ from typing import Optional
 import math
 import pandas as pd
 
-from .config import NFL_MARGIN_STD_DEV
+from .config import NFL_MARGIN_STD_DEV, DEFAULT_ROSTER_MODE
 from .data.roster import Player, get_active_roster
 from .projections.qb import project_qb_line, QBProjection
 from .projections.rb import project_rb_line
@@ -178,7 +178,11 @@ def _project_one_team(
         qb_history=data["qb_history"],
         rb_history=data["rb_history"],
         recv_history=data["recv_history"],
+        snaps_df=data.get("snaps"),
         injuries_df=data.get("injuries"),
+        schedule_df=data.get("schedule"),
+        qb_starters=data.get("qb_starters"),
+        roster_mode=data.get("roster_mode", DEFAULT_ROSTER_MODE),
         enforce_activity_filter=enforce_activity_filter,
     )
 

@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------
+# Data & generated artifacts — regenerable and large; not source code.
+# `/data/` is ANCHORED to the repo root on purpose, so it ignores the warehouse
+# data tree (nfl_projector_v1/data/...) but NOT the nfl_projector_v1/nfl_projector_v1/data/
+# CODE subpackage (roster.py, loaders.py, depth_charts.py).
+# ---------------------------------------------------------------------------
+/data/
+*.duckdb
+*.duckdb.wal
+*.parquet
+tree.txt
+
+# ---------------------------------------------------------------------------
+# Python build / cache
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+*.egg
+
+# ---------------------------------------------------------------------------
+# Virtual environments
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# ---------------------------------------------------------------------------
+# IDE / editor / OS junk
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Local config / secrets
+# ---------------------------------------------------------------------------
+.env
+.env.local
+*.secret
+credentials.json

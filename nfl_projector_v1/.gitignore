@@ -1,19 +1,9 @@
 # ---------------------------------------------------------------------------
-# Data and warehouse — these are NOT source code, can be regenerated, and
-# would bloat the repo. Anyone cloning gets the code, then ingests their
-# own data from FPD + nflverse.
+# NOTE: data/warehouse ignores now live in the REPO-ROOT .gitignore, anchored
+# as `/data/`. They were moved there because this package-level `data/` rule was
+# accidentally excluding the nfl_projector_v1/data/ CODE subpackage
+# (roster.py, loaders.py, depth_charts.py) from version control.
 # ---------------------------------------------------------------------------
-data/
-*.duckdb
-*.duckdb.wal
-*.parquet
-*.csv
-*.tsv
-*.zip
-*.xlsx
-
-# Allow small fixture/config CSVs IF needed (uncomment specific paths)
-# !tests/fixtures/sample_input.csv
 
 # ---------------------------------------------------------------------------
 # Python build / cache

@@ -28,6 +28,7 @@ from ..config import (
     LEAGUE_RUSH_TD_PER_YARD,
     LEAGUE_AVG_TEAM_FGS_PER_GAME,
     RECEIVER_YARDS_CAP,
+    RUSH_VOLUME_CEILING_MULT,
 )
 from .qb import QBProjection
 from .rb import RBProjection
@@ -290,6 +291,27 @@ def aggregate_to_team(
                 # Diagnostic: effective scaling vs baseline
                 new_total = sum(r.carries for r in rb_projs)
                 rush_volume_scaling = round(new_total / projected_carries, 3)
+
+        elif (
+            baseline_carries is not None
+            and baseline_carries > 0
+            and projected_carries > baseline_carries * RUSH_VOLUME_CEILING_MULT
+        ):
+            # Team-volume CEILING (the mirror of the floor above). Summing each
+            # back's solo-average carries overshoots a team's real volume when
+            # the roster is inclusive — extra backs, or a committee where snap
+            # share makes two RBs both look like starters. Without a ceiling this
+            # inflated team rush yards (e.g. a 4th back pushing a team to 250+
+            # rush yards) and over-projected total points. Scale every RB's
+            # carries down proportionally so the team total caps at
+            # RUSH_VOLUME_CEILING_MULT x its recent baseline (headroom for
+            # run-heavy scripts); the relative split among backs is preserved.
+            cap = baseline_carries * RUSH_VOLUME_CEILING_MULT
+            scale = cap / projected_carries
+            for rb in rb_projs:
+                rb.carries = round(rb.carries * scale, 1)
+                rb.rush_yards = round(rb.carries * rb.ypc, 1)
+            rush_volume_scaling = round(scale, 3)
 
     # ---- Rushing yards: sum of (possibly-scaled) RBs + QB scrambles ----
     rb_rush_total = sum(rb.rush_yards for rb in rb_projs)

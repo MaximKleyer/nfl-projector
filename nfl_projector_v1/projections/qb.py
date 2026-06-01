@@ -33,6 +33,7 @@ from .base import (
     blend_with_baseline,
     opponent_factor,
     injury_factor,
+    staleness_factor,
 )
 
 
@@ -162,9 +163,12 @@ def project_qb_line(
     # Get this QB's prior games (walk-forward correct)
     hist = _qb_history_up_to_week(qb.name, season, week, qb_history)
     n_games = len(hist)
+    staleness_r = staleness_factor(qb.team_games_missed)
 
     # ---- Project each base stat using the standard recipe ----
-    # Pattern: blend(weighted_recent, season_baseline) → with league fallback
+    # blend(weighted_recent, season) → league fallback, with staleness regression
+    # toward the positional (league) baseline (§12.5). Typically a no-op for QB,
+    # which resolves via depth chart/override rather than snaps.
     def _project_stat(stat: str, league_fallback: float) -> float:
         recent = weighted_recent_average(hist, stat, n_recent=4)
         season_avg = float(hist[stat].mean()) if (n_games > 0 and stat in hist.columns) else None
@@ -173,6 +177,8 @@ def project_qb_line(
             season_baseline=season_avg,
             n_recent_games=min(n_games, 4),
             league_baseline=league_fallback,
+            positional_baseline=league_fallback,
+            staleness_r=staleness_r,
         )
 
     # Volume stats (will be hit by matchup multiplier)
@@ -208,8 +214,9 @@ def project_qb_line(
 
     # ---- Combine ----
     # Volume stat: attempts get a small matchup boost (some defenses force
-    # check-downs and short passes that inflate attempts)
-    pass_attempts = pass_attempts * matchup_attempts * inj
+    # check-downs and short passes that inflate attempts). Return-game ramp
+    # applies to VOLUME only (§12.4); a no-op for QB as currently resolved.
+    pass_attempts = pass_attempts * matchup_attempts * inj * qb.return_ramp_factor
     # Efficiency stats: completion % and YPA get full matchup treatment
     cmp_pct = cmp_pct * matchup_cmp * inj
     ypa = ypa * matchup_ypa * inj

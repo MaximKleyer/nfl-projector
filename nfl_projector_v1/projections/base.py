@@ -34,6 +34,8 @@ from ..config import (
     MATCHUP_CEILING,
     INJURY_MULTIPLIERS,
     RECENT_WEIGHT,
+    STALENESS_DECAY,
+    STALENESS_GRACE_GAMES,
 )
 
 
@@ -96,31 +98,39 @@ def blend_with_baseline(
     recent_weight: float = RECENT_WEIGHT,
     league_baseline: Optional[float] = None,
     min_recent_games: int = 2,
+    positional_baseline: Optional[float] = None,
+    staleness_r: float = 0.0,
 ) -> Optional[float]:
-    """Bayesian-style blend of recent form with season-then-league baseline.
+    """Bayesian-style blend of recent form with season-then-league baseline,
+    plus an optional staleness regression toward a positional baseline.
 
-    Logic:
-      - If recent sample is full (>= 4 games), use the weighted blend:
-            recent_weight * recent + (1 - recent_weight) * season
-      - If recent sample is partial (2-3 games), the blend leans toward season:
-            (n/4) * recent_weight scales down the recent contribution
-      - If recent sample is very small (<2 games), fall back to season
-      - If no season data either, fall back to league baseline
-      - If none of those work, return None (caller decides what to do)
+    Blend logic (unchanged):
+      - recent sample full (>= 4 games): recent_weight*recent + (1-w)*season
+      - partial (2-3 games): recent contribution scaled by n/4
+      - <2 games: fall back to season, then league, then None
+
+    Staleness (DESIGN.md §12.5): if `staleness_r` > 0 — a player returning from a
+    multi-game absence — regress the blended estimate toward `positional_baseline`:
+        final = (1 - staleness_r) * blended + staleness_r * positional_baseline
+    Regressing toward the POSITIONAL/league baseline (not the player's own season,
+    which for a clean injury is the same stale data) is what actually tempers
+    stale pre-injury form. No-op when staleness_r == 0.
 
     Parameters
     ----------
     recent_value : output of weighted_recent_average, or None
     season_baseline : player's season-to-date mean, or None
-    n_recent_games : how many games were actually used for recent_value
-                     (affects how much weight to give recent)
-    recent_weight : default weight for recent when sample is full (4+ games)
-    league_baseline : fallback when player has zero season data
-    min_recent_games : if fewer than this many games, recent is ignored entirely
+    n_recent_games : how many games were used for recent_value
+    recent_weight : weight for recent when the sample is full (4+ games)
+    league_baseline : fallback when the player has no season data
+    min_recent_games : below this many games, recent is ignored
+    positional_baseline : value to regress toward under staleness (usually the
+                          same league average passed as league_baseline)
+    staleness_r : 0..1 regression strength (see staleness_factor)
 
     Returns
     -------
-    Blended estimate, or None if no data available at any level.
+    Blended (and possibly staleness-regressed) estimate, or None.
     """
     has_recent = recent_value is not None and n_recent_games >= min_recent_games
     has_season = season_baseline is not None
@@ -128,22 +138,41 @@ def blend_with_baseline(
 
     if has_recent and has_season:
         # Scale recent_weight by how full the sample is.
-        # If we have 4+ games, use full recent_weight.
-        # If we have 2 games out of 4 desired, use half of recent_weight.
         sample_completeness = min(n_recent_games / 4.0, 1.0)
         effective_weight = recent_weight * sample_completeness
-        return (
+        blended = (
             effective_weight * recent_value
             + (1.0 - effective_weight) * season_baseline
         )
-    if has_recent:
-        # No season data — just trust the recent
-        return recent_value
-    if has_season:
-        return season_baseline
-    if has_league:
-        return league_baseline
-    return None
+    elif has_recent:
+        blended = recent_value          # no season data — trust recent
+    elif has_season:
+        blended = season_baseline
+    elif has_league:
+        blended = league_baseline
+    else:
+        return None
+
+    # Staleness regression toward the positional/league baseline (§12.5)
+    if staleness_r and staleness_r > 0.0 and positional_baseline is not None:
+        blended = (1.0 - staleness_r) * blended + staleness_r * positional_baseline
+    return blended
+
+
+def staleness_factor(
+    team_games_missed: int,
+    decay: float = STALENESS_DECAY,
+    grace: int = STALENESS_GRACE_GAMES,
+) -> float:
+    """Staleness regression strength r in [0, 1) for a returning player.
+
+    r = 1 - decay ** max(0, team_games_missed - grace)
+    0 when the player wasn't absent (or was within the grace window); grows toward
+    1 the longer he was out. See DESIGN.md §12.5.
+    """
+    if not team_games_missed or team_games_missed <= grace:
+        return 0.0
+    return 1.0 - decay ** (team_games_missed - grace)
 
 
 # ---------------------------------------------------------------------------

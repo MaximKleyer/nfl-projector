@@ -17,6 +17,7 @@ from .config import (
     DEFAULT_WAREHOUSE_PATH,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_DEPTH_CHART_DIR,
+    DEFAULT_ROSTER_MODE,
 )
 
 
@@ -124,6 +125,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         min_week=args.min_week,
         max_week=args.max_week,
         verbose=True,
+        roster_mode=args.roster_mode,
     )
 
     if result.residuals.empty:
@@ -242,6 +244,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_bt.add_argument("--min-week", type=int, default=1, help="First week (default 1)")
     p_bt.add_argument("--max-week", type=int, default=18, help="Last week (default 18)")
     p_bt.add_argument("--suffix", type=str, default="", help="Suffix for output CSV filenames")
+    p_bt.add_argument("--roster-mode", choices=["depth_chart", "snaps"], default=DEFAULT_ROSTER_MODE,
+                      help=f"Roster selection: FPD snap share or legacy nflverse depth chart (default {DEFAULT_ROSTER_MODE})")
     p_bt.set_defaults(func=cmd_backtest)
 
     # refresh-depth-charts

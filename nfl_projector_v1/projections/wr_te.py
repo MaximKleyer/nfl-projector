@@ -37,6 +37,7 @@ from .base import (
     blend_with_baseline,
     opponent_factor,
     injury_factor,
+    staleness_factor,
 )
 
 
@@ -168,6 +169,7 @@ def project_receiver_line(
     """
     hist = _recv_history_up_to_week(receiver.name, season, week, recv_history)
     n_games = len(hist)
+    staleness_r = staleness_factor(receiver.team_games_missed)
 
     # Default target share baseline by (position, depth_order)
     key = (receiver.position, receiver.depth_order)
@@ -181,6 +183,8 @@ def project_receiver_line(
             season_baseline=season_avg,
             n_recent_games=min(n_games, 4),
             league_baseline=league_fallback,
+            positional_baseline=league_fallback,
+            staleness_r=staleness_r,
         )
 
     target_share = _project_stat("target_share", target_baseline)
@@ -198,8 +202,11 @@ def project_receiver_line(
 
     inj = injury_factor(receiver.name, receiver.team, season, week, injuries_df)
 
-    # Combine
-    target_share = target_share * matchup_share * inj
+    # Combine. Return-game ramp applies to VOLUME only (target_share) — a just-
+    # returned receiver gets a smaller share of targets, not worse efficiency.
+    # Ramping target_share BEFORE team.py allocation shrinks his slice and
+    # redistributes to teammates, preserving the pass-yards-sum invariant (§12.4).
+    target_share = target_share * matchup_share * inj * receiver.return_ramp_factor
     ypt = ypt * matchup_ypt * inj
     # catch_rate has small matchup effect; just apply injury
     catch_rate = catch_rate * inj

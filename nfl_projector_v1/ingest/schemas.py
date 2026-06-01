@@ -367,18 +367,25 @@ SNAPS = ReportSchema(
     granularity="player",
     weekly=True,
     columns=_PLAYER_ID_COLS,
-    # Order observed in the actual file: TOTAL, OFF, PASS, RUSH, RZ, GL.
-    # If FPD changes ordering, fix here.
-    section_layout=["total", "off", "pass", "rush", "rz", "gl"],
+    # Section order DECODED from the real 2021-2025 files (the raw FPD header
+    # labels were wrong): TOTAL, then a RUSH/PASS play-type split (rush + pass
+    # = total), then three nested red-zone tiers smallest->largest. gl/i10/rz
+    # are inferred tier names (goal-line, inside-10, red-zone); the exact
+    # yard-lines are unconfirmed but the ordering is certain. Fix here if FPD
+    # changes ordering.
+    section_layout=["total", "rush", "pass", "gl", "i10", "rz"],
     section_columns=[
         RequiredColumn("Snaps", "snaps", "int64"),
         RequiredColumn("TM Snaps", "tm_snaps", "int64"),
         RequiredColumn("Snap %", "snap_pct", "float64"),
     ],
     notes=(
-        "Six sections of (Snaps, TM Snaps, Snap %). Order: TOTAL, OFF, PASS, "
-        "RUSH, RZ, GL. The off/pass/rush split is the most useful for player "
-        "projection (separates pass-down RBs from early-down RBs)."
+        "Six sections of (Snaps, TM Snaps, Snap %): total offensive snaps; then "
+        "run-play and pass-play snaps (rush + pass = total); then three nested "
+        "red-zone tiers (gl, i10, rz = smallest to largest). total_snap_pct is "
+        "the headline snap share; the rush/pass split separates early-down from "
+        "pass-down RBs. Verified against the 2021-2025 files - the raw FPD column "
+        "labels did NOT match, so do not trust the header names."
     ),
 )
 

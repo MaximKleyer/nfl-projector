@@ -1,0 +1,14 @@
+# Manual QB starter overrides (DESIGN.md §12.2).
+#
+# Keyed: season -> week -> TEAM (standard abbr) -> starting QB full name.
+# An entry here WINS over the depth chart. Use it only for *healthy benchings*
+# (a starter pulled for performance, so there's no injury designation) that the
+# depth chart lags on. Injuries are handled automatically via the injury report;
+# you do NOT need entries for hurt QBs.
+#
+# Example:
+# 2025:
+#   10:
+#     NYJ: Tyrod Taylor
+#
+# (Empty by default — the depth chart + injury report handle the other ~95%.)

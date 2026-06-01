@@ -661,25 +661,35 @@ Estimated time across all steps: probably 5-8 messages of building + debugging. 
 
 ## 10. Results & findings (post-build)
 
-Backtested walk-forward over 2023-2025 (816 games), and over 2024-2025 (544 games) as the "fair" benchmark with prior-season history available.
+> **Updated 2026-05-29 (post-backfill):** the numbers below now reflect the warehouse
+> with 2021-2025 ingested, so all three graded seasons (2023-2025) have prior-season
+> history. The original pre-backfill benchmark was 2024-2025 only (544 games, margin
+> MAE 10.79, SU 58.8%); 2023 had to be excluded as cold-start. The before→after is in
+> §11's ingestion notes.
 
-### Benchmark — 2024+2025 (the honest number)
+Backtested walk-forward over **2023-2025 (816 games)** — the honest benchmark, now that
+2021-2022 supply prior-season history for 2023. (2021-2022 are used only as history, not
+graded: 2021 is now the cold-start season.)
+
+### Benchmark — 2023-2025, 816 games (post-backfill)
 
 | Metric | Value |
 |--------|-------|
-| Margin MAE | 10.79 |
-| Margin RMSE | 14.07 |
-| Total MAE | 10.78 |
-| SU accuracy | 58.8% |
-| ATS accuracy | 49.3% |
-| O/U accuracy | 47.3% |
-| Total bias | ~-1.8 points/game (slightly under) |
+| Margin MAE | 10.93 |
+| Margin RMSE | 14.25 |
+| Total MAE | 10.69 |
+| SU accuracy | 58.2% |
+| ATS accuracy | 47.8% |
+| O/U accuracy | 48.2% |
+| Total bias | ~-1.8 points/game (still slightly under) |
 
-2025 alone, after the depth-chart week-mapping fix: SU 58.3%, **ATS 53.9%**, margin MAE 10.82.
+Per season: **2023 SU 54.4%** (now has priors — up from ~52.6% cold-start),
+**2024 SU 60.7%**, **2025 SU 59.4% / ATS 53.2%**. ATS and O/U remain near coin-flip in
+aggregate — the model's edge is SU and margin, not the betting markets.
 
 ### Key findings
 
-1. **Cold-start problem (most important).** The model needs ~1 full prior season of data to differentiate teams. 2023 (our first data year, no 2022 priors) performs at ~52-53% SU — essentially coin flip — because early-season player projections fall back to league averages and every team looks alike. 2024 and 2025, which have prior-season history, perform much better (59% and 58% SU). **Implication:** never trust the first season of any data window. Ingesting 2021-2022 (see Future Enhancements) would fix 2023.
+1. **Cold-start problem (most important) — now mitigated for 2023.** The model needs ~1 full prior season of data to differentiate teams; without it, early-season projections fall back to league averages and every team looks alike. This was originally 2023's problem (~52-53% SU, coin-flip). **Ingesting 2021-2022 fixed it:** 2023 now has prior-season history and reaches 54.4% SU, and the honest benchmark expanded from 544 to 816 games. The problem didn't vanish — it **moved**: 2021 is now the earliest (cold-start) season, which is why the backtest grades 2023-2025. **The implication stands:** never trust the first season of any data window.
 
 2. **Matches, doesn't beat, v0.5 on raw accuracy.** As predicted in Risk #6, margin MAE (~10.8) is in the same range as the old model (~10.5). The win was interpretability and personnel-change handling, not raw error reduction.
 
@@ -697,17 +707,127 @@ Backtested walk-forward over 2023-2025 (816 games), and over 2024-2025 (544 game
 
 In rough priority order:
 
-1. **Ingest 2021-2022 data.** Highest-impact change. Would give 2023 a proper prior-season baseline and likely lift 2023 SU from ~53% to ~58%. Purely mechanical: same FPD CSV structure, re-run `build_database.py`. The 2022 depth charts use the legacy schema (no `dt` complication).
+1. **Ingest 2021-2022 data.** ✅ **DONE (2026-05-29).** The warehouse now holds 2021-2025
+   (`scripts/incorporate_2021_2022.py` → `build_database.py --seasons 2021 2022 2023 2024 2025`).
+   Gave 2023 a proper prior-season baseline (SU ~52.6% → 54.4%) and lifted 2024/2025 modestly;
+   overall SU 56.1% → 58.2%. See §10 and the ingestion notes below.
 
-2. **Cross-time team comparison.** A `compare` command to pit any two team-weeks against each other (e.g. "Week 14 2024 KC vs Week 10 2025 CLE"), projecting each against a neutral/league-average defense, then matching the two production profiles. Pure novelty/analysis feature.
+2. **Snap-share roster — replace the static nflverse depth charts.** ✅ **DONE (2026-05-31).** Implemented behind a `roster_mode` switch and now the default; snap-share beat the depth chart on SU (+2.5), ATS (+1.3), O/U (+0.8) and margin/total MAE over 2023-2025 (see §12.8). **(Full design + results: §12.)** Decide who to project (and their depth order) from FPD **snap share** rather than nflverse depth charts. Higher-leverage than it sounds — roster freshness is the #1 ATS driver (§10 finding #6), and snap% is an empirical, continuous measure of who *actually* plays vs the depth chart's stated intent. Wins: retires the "had touches in the last 4 weeks" activity-filter hack in `roster.py`, makes backup step-up automatic (helps §10 finding #5), and lets us eventually delete `depth_charts.py` and the whole nflverse dependency — including the 2025 schema / date-snapping mess. Partly scaffolded already: a `SNAPS` schema exists in `ingest/schemas.py` and the build hook is wired, but no `snaps` table is built (the raw `snaps.csv` files were never present).
+   - **Plan:** (0) pull weekly FPD offense/defense snap exports 2021-2025 → (1) land them at `data/raw/<season>/week_NN/snaps.csv` via `rename_csvs.py`, rebuild the warehouse → (2) **validate the schema's section layout** — the assumed `TOTAL, OFF, PASS, RUSH, RZ, GL` order does *not* reconcile with a real export (the 2nd section's snaps fall below TOTAL, and the last "GL" section reports more team-snaps than "RZ", impossible if GL ⊂ RZ); only the TOTAL snap% is trustworthy as-is → (3) rewire `roster.py` to rank & select by recent snap%, retiring the activity filter → (4) optional: feed snap% into the usage baselines, then drop `depth_charts.py`.
+   - **Scope note:** snap share answers *who's on the field*, not *who gets the ball* — target/carry distribution still comes from the stat tables, and QB is ~binary, so the gains concentrate at RB/WR/TE. A validated RZ/GL snap split could later feed §11 #6 (red-zone TD rates).
 
-3. **Game-script awareness.** The biggest accuracy limitation. Backup QBs with inflated garbage-time stats (e.g. Winston 2024) over-project because the model can't tell "350 yards while trailing by 21" from "350 yards in a competitive game." Would need a way to down-weight stats accumulated in blowouts.
+3. **Cross-time team comparison.** A `compare` command to pit any two team-weeks against each other (e.g. "Week 14 2024 KC vs Week 10 2025 CLE"), projecting each against a neutral/league-average defense, then matching the two production profiles. Pure novelty/analysis feature.
 
-4. **Team-specific FG rates.** Currently a flat league average (2.0). Teams that drive-but-stall (kick more FGs) vs teams that punch it in differ meaningfully. Requires FG data not currently in the warehouse.
+4. **Game-script awareness.** The biggest accuracy limitation. Backup QBs with inflated garbage-time stats (e.g. Winston 2024) over-project because the model can't tell "350 yards while trailing by 21" from "350 yards in a competitive game." Would need a way to down-weight stats accumulated in blowouts.
 
-5. **Red-zone TD conversion rates.** Per-team RZ efficiency would replace the league-average TD-per-yard conversion, helping high-conversion teams (PHI, BAL) that we currently under-project.
+5. **Team-specific FG rates.** Currently a flat league average (2.0). Teams that drive-but-stall (kick more FGs) vs teams that punch it in differ meaningfully. Requires FG data not currently in the warehouse.
 
-6. **QB cross-team history.** When a QB changes teams (e.g. Wilson DEN → PIT), we currently use his recent games regardless of team context. Could weight by scheme/team fit.
+6. **Red-zone TD conversion rates.** Per-team RZ efficiency would replace the league-average TD-per-yard conversion, helping high-conversion teams (PHI, BAL) that we currently under-project.
+
+7. **QB cross-team history.** When a QB changes teams (e.g. Wilson DEN → PIT), we currently use his recent games regardless of team context. Could weight by scheme/team fit.
+
+## 12. Snap-share roster & injury-aware recency
+
+> **Status: IMPLEMENTED & VALIDATED (2026-05-31).** Built behind a `roster_mode` switch and now the default (`DEFAULT_ROSTER_MODE = "snaps"`). A/B results, the rush-volume-ceiling fix found during validation, and final knob values are in §12.8.
+
+Replaces the static nflverse depth chart with **FPD snap share** as the basis for *who to project and at what depth*. Roster freshness is the #1 ATS driver (§10 finding #6), and snap% is an empirical, continuous measure of who actually plays rather than the depth chart's stated intent. Bonus: retires the nflverse dependency and the fragile 2025 depth-chart date-snapping.
+
+### 12.1 Positions in scope
+
+Snap share drives selection for **WR / RB / FB / TE only** — FPD's offense snap export already contains exactly these (no QB, no OL). **FB is folded into RB**, as `depth_charts.py` normalization already does; fullbacks produce negligible carries/targets, so they ride the RB path. QB is handled separately (§12.2).
+
+### 12.2 QB selection (no snaps)
+
+QB is binary — the starter plays ~100%, so snap share carries no signal, and predicting an in-game injury/benching isn't the model's job. The starter is resolved in order:
+
+1. **Manual override** — a tracked `qb_starters.yaml` keyed `season → week → team → QB`. If an entry exists, it wins.
+2. **Depth-chart QB1** otherwise.
+3. **Injury check** — if that QB is **Out / IR / Doubtful** on the (walk-forward) injury report, fall through to QB2. Questionable still starts (with the existing minor drag).
+
+The override exists for *healthy benchings* (a starter pulled for performance → no injury flag) that the depth chart can lag on. It's used in both live and backtest; you only add entries for the cases that matter — everything else falls back to the depth chart. It's manual rather than automatic because the obvious automation ("trust whoever threw last week") misfires when a QB returns from injury — the backup threw last week, but the starter is back.
+
+### 12.3 Injury-aware recency — "last N active games"
+
+The recency window for every skill position is the player's **last N games actually played**, never the last N calendar weeks.
+
+- **Why:** the current roster activity filter (`roster.py` → `_player_had_recent_touches`) is calendar-based, so a player returning from a 4+ week injury has no touches in the trailing window and is **dropped entirely** — the model loses a returning starter for up to 4 weeks. (The per-player *stat* projection already uses games-played via `tail()`, so the bug is in selection, not projection — and the new snap-selection must use games-played snap% too, or it re-introduces the same bug.)
+- **Rule:** select & weight by snap% over the player's last N *active* games, ignoring missed weeks. Inclusion is gated by two leakage-free pre-game signals — he's on the depth chart **and** not Out/IR on the injury report; magnitude comes from his last-N-active-games snap% and stats.
+
+### 12.4 Return-game ramp discount
+
+A player back from a real absence is eased in, not projected at full pre-injury volume.
+
+- **Trigger:** missed **≥ 2 of his team's games** (counted in *team games*, not calendar weeks — a bye doesn't count).
+- **Schedule:** 1st game back ×0.80, 2nd ×0.90, 3rd+ ×1.00.
+- **Applied as:** a multiplier on projected production *and* a cap on allocated snap share.
+
+```python
+RETURN_RAMP_FACTORS         = {1: 0.80, 2: 0.90}   # games-back → factor (else 1.0)
+RETURN_TRIGGER_GAMES_MISSED = 2                     # min team games missed to count as a return
+```
+
+### 12.5 Staleness regression
+
+The longer a player has been gone, the less his pre-injury numbers are trusted — regressed toward the **positional (league) baseline**, *not* his own season average.
+
+- **Why the positional baseline:** for a clean injury his "recent" and "season" numbers are the same pre-injury games, so regressing recent → season is a no-op; only regressing toward a neutral positional expectation actually tempers stale form.
+
+```
+final = (1 − r)·player_form + r·positional_baseline
+r     = 1 − STALENESS_DECAY ** max(0, team_games_missed − STALENESS_GRACE_GAMES)
+```
+```python
+STALENESS_DECAY       = 0.85   # per team-game missed; may be raised later for a harsher cap
+STALENESS_GRACE_GAMES = 1      # first missed game is "free"
+```
+Examples: out 2 games → r ≈ 0.15; out 6 → r ≈ 0.56.
+
+### 12.6 Net effect
+
+Ramp and staleness are *dampeners* on the returning-player boost. The design **includes** the returner (fixing the omission bug — the main win) but projects him at a **calibrated** level, not naive full pre-injury form. A star back from a 6-game absence lands around `0.80 (ramp) × ~56%-regressed form` in game 1, climbing to full by game 3.
+
+### 12.7 Build status — ✅ DONE (2026-05-31)
+
+1. ✅ Landed weekly `snaps.csv` (2021-2025) via `rename_csvs.py`; rebuilt → `snaps` table (31,149 rows, WR/TE/RB/FB only).
+2. ✅ Validated & **corrected** the SNAPS section layout — the raw FPD labels were wrong; columns are now `total / rush / pass / gl / i10 / rz` (a run/pass play split + three nested red-zone tiers smallest→largest). Only `total_snap_pct` feeds roster selection.
+3. ✅ Rewired `roster.py`: snap-share selection over last-N-active-games, retired the calendar activity filter, added `resolve_qb` (§12.2) + a `qb_starters.yaml` loader. Both paths kept behind `roster_mode`.
+4. ✅ Added ramp + staleness knobs to `config.py`; applied in `projections/base.py` (`blend_with_baseline` + `staleness_factor`) and the qb/rb/wr_te modules (volume-only ramp).
+5. ✅ A/B-backtested vs the depth-chart system (§12.8). Snap-share won → it is now the default (`DEFAULT_ROSTER_MODE = "snaps"`).
+
+### 12.8 Rush-volume ceiling + A/B results
+
+**Rush-volume ceiling (added during validation — a new permanent mechanism).** The
+first snap-share backtest *over-projected total points* (bias swung from ~1.8-under
+to 3.2-over; total MAE 10.69 → 11.17). Cause: `team.py` summed each RB's solo-average
+carries with a volume *floor* but **no ceiling**, so a more-inclusive snap roster (an
+extra RB, or a committee where snap share makes two backs both look like starters)
+inflated team rush yards — one team projected to 266. Fix: a symmetric team-carry
+**ceiling** — when projected carries exceed `RUSH_VOLUME_CEILING_MULT` (1.20) × the
+team's recent RB-carry baseline, scale every RB's carries down proportionally so the
+team total caps there (the split among backs is preserved). General correctness fix;
+applies to both roster modes. (1.20 leaves headroom for run-heavy scripts; capping
+tighter over-corrects and pushes totals to under-project.)
+
+**A/B backtest — 2023-2025, 816 games** (both modes with the ceiling):
+
+| Metric | Depth-chart | Snap-share | Δ |
+|--------|-------------|------------|---|
+| SU accuracy | 58.0% | **60.5%** | +2.5 |
+| ATS accuracy | 47.7% | **49.0%** | +1.3 |
+| O/U accuracy | 48.4% | **49.2%** | +0.8 |
+| Margin MAE | 10.90 | **10.63** | −0.27 |
+| Total MAE | 10.65 | **10.52** | −0.13 |
+| Total bias | +2.33 under | +1.44 under | calibrated |
+
+Snap-share wins on every metric, and total bias (+1.44) is back in line with the
+model's historical ~1.8-under calibration. The legacy path stays available via
+`backtest --roster-mode depth_chart`.
+
+**Final knob values:** `SNAP_SHARE_MIN_PCT=15`, `SNAP_ROSTER_CAPS={WR:5, RB:4, TE:3}`,
+`RETURN_RAMP_FACTORS={1:0.80, 2:0.90}` (trigger 2 team games missed),
+`STALENESS_DECAY=0.85` / grace 1, `RUSH_VOLUME_CEILING_MULT=1.20`.
+
+---
 
 ## Ingestion notes
 
@@ -716,6 +836,6 @@ In rough priority order:
   mapped to WAS. The 2021 franchise predates the Commanders rebrand. Applied
   manually to the v0.5 team-normalizer; re-apply if rebuilding ingestion from
   scratch.
-- **2021-2022 backtest result:** ingesting 2021-2022 lifted 2023 SU 52.6%?54.4%
+- **2021-2022 backtest result:** ingesting 2021-2022 lifted 2023 SU 52.6% → 54.4%
   and improved 2024/2025 modestly (+1-1.5 pts each) via more stable baselines.
-  Overall SU 56.1%?58.2%, margin MAE ~unchanged (10.98?10.93).
+  Overall SU 56.1% → 58.2%, margin MAE ~unchanged (10.98 → 10.93).

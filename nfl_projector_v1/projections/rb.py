@@ -30,6 +30,7 @@ from .base import (
     blend_with_baseline,
     opponent_factor,
     injury_factor,
+    staleness_factor,
 )
 
 
@@ -174,6 +175,7 @@ def project_rb_line(
     # Get this RB's prior games (walk-forward correct)
     hist = _rb_history_up_to_week(rb.name, season, week, rb_history)
     n_games = len(hist)
+    staleness_r = staleness_factor(rb.team_games_missed)
 
     # Backups in the depth chart get scaled-down expectations even with
     # full league baseline. Adjust the carries baseline based on depth.
@@ -194,6 +196,8 @@ def project_rb_line(
             season_baseline=season_avg,
             n_recent_games=min(n_src, 4),
             league_baseline=league_fallback,
+            positional_baseline=league_fallback,
+            staleness_r=staleness_r,
         )
 
     # ----- Rushing -----
@@ -208,8 +212,10 @@ def project_rb_line(
     # Injury factor
     inj = injury_factor(rb.name, rb.team, season, week, injuries_df)
 
-    # Combine rushing
-    carries = carries * inj
+    # Combine rushing. Return-game ramp applies to VOLUME only (carries), not
+    # efficiency (ypc) — a just-returned back gets fewer carries, not worse ones
+    # per carry (DESIGN.md §12.4).
+    carries = carries * inj * rb.return_ramp_factor
     ypc = ypc * matchup_ypc * inj
     rush_yards = carries * ypc
 
@@ -237,7 +243,7 @@ def project_rb_line(
             catch_rate = _project_stat("catch_rate", LEAGUE_AVG_RECV_CATCH_RATE, src=rhist)
             # Apply injury to receiving stats too (no separate matchup adjustment
             # for RB receiving — small effect, kept simple)
-            target_share = target_share * inj
+            target_share = target_share * inj * rb.return_ramp_factor
             ypt = ypt * inj
             catch_rate = catch_rate * inj
 

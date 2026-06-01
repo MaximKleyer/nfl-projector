@@ -88,6 +88,14 @@ INJURY_MULTIPLIERS = {
 # capping at 280 leaves room for outliers while preventing absurd outputs.
 RECEIVER_YARDS_CAP = 280.0
 
+# Team rush-volume ceiling (team.py). Summing per-RB projected carries can
+# overshoot a team's real volume when the roster is inclusive (committee backs /
+# an extra RB), inflating rush yards and total points. team.py caps the team's
+# total carries at this multiple of its recent RB-carry baseline. 1.20 leaves
+# headroom for run-heavy game scripts while clipping the egregious overshoots;
+# capping tighter (toward 1.0) over-corrects and pushes totals to under-project.
+RUSH_VOLUME_CEILING_MULT = 1.20
+
 # ---------------------------------------------------------------------------
 # File paths
 # ---------------------------------------------------------------------------
@@ -154,3 +162,55 @@ PROJECT_ROOT = _find_project_root()
 DEFAULT_WAREHOUSE_PATH  = _find_warehouse()
 DEFAULT_OUTPUT_DIR      = PROJECT_ROOT / "data" / "processed" / "v2"
 DEFAULT_DEPTH_CHART_DIR = PROJECT_ROOT / "data" / "raw" / "depth_charts"
+
+# ---------------------------------------------------------------------------
+# Snap-share roster & injury-aware recency (DESIGN.md §12)
+# ---------------------------------------------------------------------------
+# Skill-position rosters (WR/RB/FB/TE) are selected from FPD snap share instead
+# of the static depth chart. QB is handled separately (depth chart + injury +
+# manual override). See DESIGN.md §12 for the full design.
+
+# Minimum average snap% (over a player's last RECENT_GAMES_WINDOW *active* games,
+# i.e. games actually played) for a skill player to be projected. ~15% reproduces
+# the old WR4/RB3/TE2 roster sizes from actual playing time while keeping marginal
+# slot WRs / committee RBs.
+SNAP_SHARE_MIN_PCT = 15.0
+
+# Hard cap on how many players to keep per position after the snap-share filter
+# (FB folds into RB). Prevents a noisy 6th WR from inflating team production.
+SNAP_ROSTER_CAPS = {"WR": 5, "RB": 4, "TE": 3}
+
+# Positions selected via snap share. FB folds into RB downstream.
+SNAP_SELECTION_POSITIONS = ("WR", "RB", "TE", "FB")
+
+# --- Return-game ramp discount (§12.4) -------------------------------------
+# A player back from a real absence (>= RETURN_TRIGGER_GAMES_MISSED of his TEAM's
+# games) is eased in: his projected VOLUME is multiplied by the games-back factor
+# (efficiency is untouched). Games-back beyond the table -> 1.0 (full).
+RETURN_TRIGGER_GAMES_MISSED = 2
+RETURN_RAMP_FACTORS = {1: 0.80, 2: 0.90}
+
+# --- Staleness regression (§12.5) ------------------------------------------
+# The longer a player has been gone, the more his (stale) recent form is regressed
+# toward the positional/league baseline:
+#   r = 1 - STALENESS_DECAY ** max(0, team_games_missed - STALENESS_GRACE_GAMES)
+#   final = (1 - r) * player_form + r * positional_baseline
+STALENESS_DECAY = 0.85
+STALENESS_GRACE_GAMES = 1
+
+# --- QB starter resolution (§12.2) -----------------------------------------
+# Manual override file (tracked YAML, keyed season -> week -> team -> QB name).
+# Wins over the depth chart; for healthy benchings the depth chart/injury report
+# can't capture. Lives in the package (the gitignored tree is data/, not here).
+QB_STARTERS_YAML = Path(__file__).resolve().parent / "qb_starters.yaml"
+
+# QB injury statuses that trigger fallthrough from depth-chart QB1 to QB2.
+# (Questionable still starts, with the existing INJURY_MULTIPLIERS drag.)
+QB_WONT_START_STATUSES = {"Out", "IR", "Doubtful"}
+
+# Default roster selection mode: "depth_chart" (legacy) or "snaps" (§12).
+# Flipped to "snaps" (2026-05-31) after the A/B backtest: snap-share beat the
+# depth chart on SU (+2.5), ATS (+1.3), O/U (+0.8), and margin/total MAE over
+# 2023-2025. Set back to "depth_chart" (or `backtest --roster-mode depth_chart`)
+# to run the legacy path for comparison.
+DEFAULT_ROSTER_MODE = "snaps"

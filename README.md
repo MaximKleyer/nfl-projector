@@ -43,22 +43,24 @@ for grading** ATS/OU — they never anchor the predictions.
 
 ## Performance
 
-Walk-forward backtest on 2024-2025 (544 games, the "fair" sample with prior-season
-history available):
+Walk-forward backtest on **2023-2025 (816 games)** — the honest sample now that
+2021-2022 are ingested and supply prior-season history for 2023:
 
 | Metric | Value |
 |--------|-------|
-| Margin MAE | 10.79 |
-| SU accuracy | 58.8% |
-| ATS accuracy | 49.3% |
-| O/U accuracy | 47.3% |
-| Total MAE | 10.78 |
+| Margin MAE | 10.93 |
+| SU accuracy | 58.2% |
+| ATS accuracy | 47.8% |
+| O/U accuracy | 48.2% |
+| Total MAE | 10.69 |
 
-2025 alone (post roster-fix): SU 58.3%, ATS 53.9%.
+Per season: 2023 SU 54.4%, 2024 SU 60.7%, 2025 SU 59.4% (ATS 53.2%). ATS and O/U
+sit near coin-flip in aggregate — the model's edge is straight-up winners and margin,
+not the betting markets.
 
 **Known limitation:** the model needs ~1 full prior season of data to perform.
-The first season of any data window (currently 2023) sits near coin-flip on SU
-because player projections fall back to league averages. See `DESIGN.md` §10.
+The first season of the data window — now **2021** (no 2019-2020 priors) — sits near
+coin-flip on SU, so the backtest only grades from 2023 onward. See `DESIGN.md` §10.
 
 ## Setup
 
@@ -81,7 +83,7 @@ python -m nfl_projector_v1 refresh-depth-charts --seasons 2023 2024 2025
 If the warehouse is missing, build it from the raw FPD CSVs:
 
 ```bash
-python scripts/build_database.py --seasons 2023 2024 2025
+python scripts/build_database.py --seasons 2021 2022 2023 2024 2025
 ```
 
 ## Usage
@@ -136,7 +138,7 @@ DESIGN.md                full design doc + results + future work
 
 ## Status & roadmap
 
-v1 is complete and operational. Planned enhancements (see `DESIGN.md` §11):
-ingest 2021-2022 to fix the cold-start season, game-script awareness for
-backup-QB over-projection, team-specific FG and red-zone rates, and a
-cross-time team comparison command.
+v1 is complete and operational, with **2021-2025 ingested** — the 2021-2022 backfill
+that fixed the 2023 cold-start is done (see `DESIGN.md` §10/§11). Remaining planned
+enhancements (`DESIGN.md` §11): game-script awareness for backup-QB over-projection,
+team-specific FG and red-zone TD rates, and a cross-time team comparison command.
