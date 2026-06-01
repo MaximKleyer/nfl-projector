@@ -96,6 +96,31 @@ RECEIVER_YARDS_CAP = 280.0
 # capping tighter (toward 1.0) over-corrects and pushes totals to under-project.
 RUSH_VOLUME_CEILING_MULT = 1.20
 
+# --- Team-specific TD-per-yard conversion (DESIGN.md §11 #5) ----------------
+# "league" = flat LEAGUE_*_TD_PER_YARD for every team (baseline / default).
+# "team"   = each team's own walk-forward TD-per-yard, empirical-Bayes shrunk
+#            toward the league rate and clamped. Fixes the flat rate under-
+#            projecting efficient offenses (DET/BAL/BUF...) and over-projecting
+#            inefficient ones. DEFAULT (2026-06-01) after the A/B — team+cal beat
+#            the flat rate on SU/ATS/margin/bias. A/B the legacy flat rate via
+#            `backtest --td-rates league`.
+DEFAULT_TD_RATES = "team"
+# Shrinkage "prior": yards of league-average production blended in before a
+# team's own rate is trusted (~5 games' worth). Larger = more regression to mean.
+TD_RATE_PRIOR_PASS_YDS = 1200.0
+TD_RATE_PRIOR_RUSH_YDS = 600.0
+# Team rate clamped to [lo, hi] x the league rate as a small-sample safety rail.
+TD_RATE_CLAMP = (0.75, 1.40)
+
+# --- Global total-points calibration ----------------------------------------
+# Additive points per team to remove the model's systematic ~1.8-pt total
+# under-bias. Applied to BOTH teams equally, so it shifts the game TOTAL (and
+# O/U) WITHOUT changing margin / SU / ATS. ~0.9/team (≈ +1.8 total) zeros the
+# backtest bias. This is the "level" knob; per-team TD rates are the "shape"
+# knob. ON by default (team+cal won the A/B); disable via `backtest --no-calibrate`.
+POINTS_CALIBRATION_PER_TEAM = 0.9
+DEFAULT_CALIBRATE = True
+
 # ---------------------------------------------------------------------------
 # File paths
 # ---------------------------------------------------------------------------

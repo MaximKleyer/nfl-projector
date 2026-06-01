@@ -29,6 +29,10 @@ from ..config import (
     LEAGUE_AVG_TEAM_FGS_PER_GAME,
     RECEIVER_YARDS_CAP,
     RUSH_VOLUME_CEILING_MULT,
+    DEFAULT_TD_RATES,
+    TD_RATE_PRIOR_PASS_YDS,
+    TD_RATE_PRIOR_RUSH_YDS,
+    TD_RATE_CLAMP,
 )
 from .qb import QBProjection
 from .rb import RBProjection
@@ -136,6 +140,44 @@ def _team_recent_rush_attempts(
     return float(per_game.tail(n_recent).mean())
 
 
+def _team_td_rate(
+    history: Optional[pd.DataFrame],
+    td_col: str,
+    yds_col: str,
+    team: str,
+    season: int,
+    week: int,
+    league_rate: float,
+    prior_yds: float,
+    clamp: tuple = TD_RATE_CLAMP,
+) -> float:
+    """A team's TD-per-yard, computed walk-forward (games STRICTLY before
+    (season, week)) and empirical-Bayes shrunk toward the league rate:
+
+        rate = (team_TDs + league_rate * prior_yds) / (team_yds + prior_yds)
+
+    Shrinkage keeps small early-season samples sane; once a team has lots of
+    yardage history the prior washes out and we trust its own rate. The result
+    is clamped to [lo, hi] x league_rate as a safety rail, and falls back to the
+    league rate when there's no usable history.
+    """
+    if (history is None or history.empty
+            or td_col not in history.columns or yds_col not in history.columns):
+        return league_rate
+    mask = (history["team_norm"] == team) & (
+        (history["season"] < season)
+        | ((history["season"] == season) & (history["week_num"] < week))
+    )
+    h = history[mask]
+    team_yds = float(h[yds_col].sum())
+    if team_yds <= 0:
+        return league_rate
+    team_td = float(h[td_col].sum())
+    rate = (team_td + league_rate * prior_yds) / (team_yds + prior_yds)
+    lo, hi = clamp
+    return max(league_rate * lo, min(league_rate * hi, rate))
+
+
 def aggregate_to_team(
     qb_proj: QBProjection,
     rb_projs: list[RBProjection],
@@ -146,6 +188,8 @@ def aggregate_to_team(
     week: int,
     schedule_df: Optional[pd.DataFrame] = None,
     rb_history: Optional[pd.DataFrame] = None,
+    qb_history: Optional[pd.DataFrame] = None,
+    td_rates: str = DEFAULT_TD_RATES,
 ) -> TeamProduction:
     """Aggregate player projections into TeamProduction.
 
@@ -165,6 +209,9 @@ def aggregate_to_team(
     rb_history : optional, used for team rush volume baseline. When the
                  sum of projected RB carries falls short of the team's
                  recent average, scale up to match team-level reality.
+    qb_history : optional, passing game logs used for the team TD-per-yard rate.
+    td_rates : "league" (flat LEAGUE_*_TD_PER_YARD) or "team" (per-team shrunk
+               rate via _team_td_rate). See config DEFAULT_TD_RATES.
 
     Returns
     -------
@@ -320,9 +367,24 @@ def aggregate_to_team(
     # ---- Total yards ----
     team_total_yards = team_pass_yards + team_rush_yards
 
-    # ---- Implied TDs from yardage × league conversion ----
-    pass_tds = team_pass_yards * LEAGUE_PASS_TD_PER_YARD
-    rush_tds = team_rush_yards * LEAGUE_RUSH_TD_PER_YARD
+    # ---- Implied TDs from yardage × TD-per-yard conversion ----
+    # "league" = flat rate for all; "team" = each team's own walk-forward,
+    # shrunk TD-per-yard (fixes the flat rate under-/over-projecting efficient/
+    # inefficient offenses — DESIGN.md §11 #5).
+    if td_rates == "team":
+        pass_rate = _team_td_rate(
+            qb_history, "pass_td", "pass_yds", team, season, week,
+            LEAGUE_PASS_TD_PER_YARD, TD_RATE_PRIOR_PASS_YDS,
+        )
+        rush_rate = _team_td_rate(
+            rb_history, "rush_td", "rush_yds", team, season, week,
+            LEAGUE_RUSH_TD_PER_YARD, TD_RATE_PRIOR_RUSH_YDS,
+        )
+    else:
+        pass_rate = LEAGUE_PASS_TD_PER_YARD
+        rush_rate = LEAGUE_RUSH_TD_PER_YARD
+    pass_tds = team_pass_yards * pass_rate
+    rush_tds = team_rush_yards * rush_rate
     total_tds = pass_tds + rush_tds
 
     # ---- FGs (placeholder league average for v1) ----

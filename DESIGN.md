@@ -722,7 +722,7 @@ In rough priority order:
 
 5. **Team-specific FG rates.** Currently a flat league average (2.0). Teams that drive-but-stall (kick more FGs) vs teams that punch it in differ meaningfully. Requires FG data not currently in the warehouse.
 
-6. **Red-zone TD conversion rates.** Per-team RZ efficiency would replace the league-average TD-per-yard conversion, helping high-conversion teams (PHI, BAL) that we currently under-project.
+6. **Red-zone / per-team TD conversion rates.** ✅ **DONE (2026-06-01).** Implemented as per-team TD-per-yard (empirical-Bayes shrunk toward the league rate, clamped) plus a global total-points calibration; now the production default. Lifted SU 60.5→62.2%, ATS 49.0→50.2%, fixed the high-octane UNDER lean (shootout UNDER% 76→41%), and zeroed the total bias. Full design + A/B in §13.
 
 7. **QB cross-team history.** When a QB changes teams (e.g. Wilson DEN → PIT), we currently use his recent games regardless of team context. Could weight by scheme/team fit.
 
@@ -826,6 +826,46 @@ model's historical ~1.8-under calibration. The legacy path stays available via
 **Final knob values:** `SNAP_SHARE_MIN_PCT=15`, `SNAP_ROSTER_CAPS={WR:5, RB:4, TE:3}`,
 `RETURN_RAMP_FACTORS={1:0.80, 2:0.90}` (trigger 2 team games missed),
 `STALENESS_DECAY=0.85` / grace 1, `RUSH_VOLUME_CEILING_MULT=1.20`.
+
+---
+
+## 13. Per-team TD conversion & total calibration
+
+> **Status: implemented & production default (2026-06-01).** Addresses §11 #6.
+
+The flat league TD-per-yard rate (§4.1) gives every team the same finishing
+efficiency, which **under-projects efficient offenses** (DET +4.7, BAL +4.4,
+BUF +1.7 pts/game vs their yardage) and over-projects inefficient ones
+(NYJ/TEN ≈ −3.4) — so high-octane games leaned UNDER. Two knobs fix it:
+
+**Per-team TD-per-yard (`td_rates="team"` — the "shape" fix).** Each team's own
+walk-forward TD-per-yard, empirical-Bayes shrunk toward the league rate:
+`rate = (team_TDs + league_rate·K) / (team_yds + K)`, clamped to [0.75, 1.40] ×
+league. Computed in `team.py:_team_td_rate` from `qb_history`/`rb_history` strictly
+before the game (no leakage). Knobs: `TD_RATE_PRIOR_PASS_YDS` (1200),
+`TD_RATE_PRIOR_RUSH_YDS` (600), `TD_RATE_CLAMP`.
+
+**Global calibration (`POINTS_CALIBRATION_PER_TEAM` — the "level" fix).** A fixed
++0.9 points added to BOTH teams (in `game.py`), shifting the game TOTAL / O-U to
+zero the model's ~1.8-pt total under-bias **without** changing margin / SU / ATS
+(an equal shift to both scores leaves the margin invariant). Toggle off with
+`backtest --no-calibrate`.
+
+**A/B (816 games, 2023-2025) — `team+cal` is the production default:**
+
+| config | SU | ATS | O/U | margin MAE | total bias | shootout UNDER% |
+|--------|----|----|-----|-----------|-----------|-----------------|
+| league (flat) | 60.5% | 49.0% | 49.2% | 10.63 | +1.44 | 76% |
+| team | 62.2% | 50.2% | 47.9% | 10.45 | +1.79 | 60% |
+| league + cal | 60.5% | 49.0% | 48.7% | 10.63 | −0.36 | 58% |
+| **team + cal** | **62.2%** | **50.2%** | **49.6%** | **10.45** | **−0.01** | **41%** |
+
+Team rates fix the *shape* (SU/ATS/margin + the shootout lean); calibration fixes
+the *level* (total bias → 0). Together they're best on every metric — the lone cost
+is +0.09 total MAE from per-team-rate variance. Defaults: `DEFAULT_TD_RATES="team"`,
+`DEFAULT_CALIBRATE=True`. A/B the flat / uncalibrated baselines via
+`backtest --td-rates league --no-calibrate`. (`predict` also colorizes the
+winner's score green / loser's red.)
 
 ---
 

@@ -10,6 +10,7 @@ Invoke via:  python -m nfl_projector_v1 <command> [options]
 """
 from __future__ import annotations
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -18,7 +19,38 @@ from .config import (
     DEFAULT_OUTPUT_DIR,
     DEFAULT_DEPTH_CHART_DIR,
     DEFAULT_ROSTER_MODE,
+    DEFAULT_TD_RATES,
+    DEFAULT_CALIBRATE,
 )
+
+
+# ---------------------------------------------------------------------------
+# Terminal color for the predict table (winner score green, loser red)
+# ---------------------------------------------------------------------------
+# Only colorize on an interactive terminal (so redirecting to a file stays
+# plain). FORCE_COLOR overrides; NO_COLOR disables.
+_USE_COLOR = bool(
+    (sys.stdout.isatty() or os.environ.get("FORCE_COLOR"))
+    and not os.environ.get("NO_COLOR")
+)
+_GREEN, _RED, _RESET = "\033[92m", "\033[91m", "\033[0m"
+
+
+def _enable_ansi_colors() -> None:
+    """Enable ANSI escape processing on legacy Windows consoles (no-op elsewhere)."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            k = ctypes.windll.kernel32
+            # 0x0007 = PROCESSED_OUTPUT | WRAP_AT_EOL | VIRTUAL_TERMINAL_PROCESSING
+            k.SetConsoleMode(k.GetStdHandle(-11), 0x0007)
+        except Exception:
+            pass
+
+
+def _c(text: str, code: str) -> str:
+    """Wrap text in an ANSI color (no-op when color is disabled)."""
+    return f"{code}{text}{_RESET}" if _USE_COLOR else text
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +64,17 @@ def _format_game_line(pred) -> str:
     """
     away, home = pred.away_team, pred.home_team
     matchup = f"{away} @ {home}"
-    score = f"{home} {pred.predicted_home_score:.1f} - {away} {pred.predicted_away_score:.1f}"
+
+    # Color the scores by projected winner: winner green, loser red (scores only).
+    hs, as_ = pred.predicted_home_score, pred.predicted_away_score
+    home_s, away_s = f"{hs:.1f}", f"{as_:.1f}"
+    if hs > as_:
+        home_s, away_s = _c(home_s, _GREEN), _c(away_s, _RED)
+    elif as_ > hs:
+        home_s, away_s = _c(home_s, _RED), _c(away_s, _GREEN)
+    # Pad to width 24 on the VISIBLE length (ANSI codes are zero-width).
+    plain = f"{home} {hs:.1f} - {away} {as_:.1f}"
+    score = f"{home} {home_s} - {away} {away_s}" + " " * max(0, 24 - len(plain))
 
     su_prob = (
         pred.win_prob_home if pred.su_pick == home else pred.win_prob_away
@@ -42,7 +84,7 @@ def _format_game_line(pred) -> str:
     ats = f"ATS: {pred.ats_pick}" if pred.ats_pick else "ATS: —"
     ou = f"O/U: {pred.ou_pick}" if pred.ou_pick else "O/U: —"
 
-    return f"{matchup:14s} {score:24s} | {su:18s} {ats:10s} {ou}"
+    return f"{matchup:14s} {score} | {su:18s} {ats:10s} {ou}"
 
 
 def cmd_predict(args: argparse.Namespace) -> int:
@@ -54,6 +96,7 @@ def cmd_predict(args: argparse.Namespace) -> int:
     season = args.season
     week = args.week
 
+    _enable_ansi_colors()
     print(f"Loading warehouse...")
     data = load_all()
 
@@ -126,6 +169,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         max_week=args.max_week,
         verbose=True,
         roster_mode=args.roster_mode,
+        td_rates=args.td_rates,
+        calibrate=args.calibrate,
     )
 
     if result.residuals.empty:
@@ -246,6 +291,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_bt.add_argument("--suffix", type=str, default="", help="Suffix for output CSV filenames")
     p_bt.add_argument("--roster-mode", choices=["depth_chart", "snaps"], default=DEFAULT_ROSTER_MODE,
                       help=f"Roster selection: FPD snap share or legacy nflverse depth chart (default {DEFAULT_ROSTER_MODE})")
+    p_bt.add_argument("--td-rates", choices=["league", "team"], default=DEFAULT_TD_RATES,
+                      help=f"TD-per-yard conversion: flat league rate or per-team shrunk rate (default {DEFAULT_TD_RATES})")
+    p_bt.add_argument("--calibrate", dest="calibrate", action="store_true", default=DEFAULT_CALIBRATE,
+                      help=f"Apply the global total-points calibration (default {DEFAULT_CALIBRATE}; fixes total bias, leaves margin/SU/ATS unchanged)")
+    p_bt.add_argument("--no-calibrate", dest="calibrate", action="store_false",
+                      help="Disable the global total-points calibration (for A/B comparison)")
     p_bt.set_defaults(func=cmd_backtest)
 
     # refresh-depth-charts

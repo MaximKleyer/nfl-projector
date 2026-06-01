@@ -22,7 +22,10 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from .config import DEFAULT_OUTPUT_DIR, DEFAULT_ROSTER_MODE
+from .config import (
+    DEFAULT_OUTPUT_DIR, DEFAULT_ROSTER_MODE, DEFAULT_TD_RATES,
+    POINTS_CALIBRATION_PER_TEAM, DEFAULT_CALIBRATE,
+)
 from .data.loaders import load_all
 from .game import project_game, GamePrediction
 
@@ -180,6 +183,8 @@ def walk_forward_backtest(
     warehouse_path: Optional[Path] = None,
     verbose: bool = True,
     roster_mode: str = DEFAULT_ROSTER_MODE,
+    td_rates: str = DEFAULT_TD_RATES,
+    calibrate: bool = DEFAULT_CALIBRATE,
 ) -> BacktestResult:
     """Run a walk-forward backtest over the specified seasons and week range.
 
@@ -200,6 +205,8 @@ def walk_forward_backtest(
             print(f"Loading warehouse...")
         data = load_all(warehouse_path)
     data["roster_mode"] = roster_mode
+    data["td_rates"] = td_rates
+    data["points_calibration"] = POINTS_CALIBRATION_PER_TEAM if calibrate else 0.0
 
     schedule = data["schedule"]
     # Filter to test seasons + week range, must have actual scores

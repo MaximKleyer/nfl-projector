@@ -22,7 +22,10 @@ from typing import Optional
 import math
 import pandas as pd
 
-from .config import NFL_MARGIN_STD_DEV, DEFAULT_ROSTER_MODE
+from .config import (
+    NFL_MARGIN_STD_DEV, DEFAULT_ROSTER_MODE, DEFAULT_TD_RATES,
+    POINTS_CALIBRATION_PER_TEAM, DEFAULT_CALIBRATE,
+)
 from .data.roster import Player, get_active_roster
 from .projections.qb import project_qb_line, QBProjection
 from .projections.rb import project_rb_line
@@ -243,6 +246,8 @@ def _project_one_team(
         team=team, opponent=opponent, season=season, week=week,
         schedule_df=data.get("schedule"),
         rb_history=data.get("rb_history"),
+        qb_history=data.get("qb_history"),
+        td_rates=data.get("td_rates", DEFAULT_TD_RATES),
     )
 
 
@@ -276,9 +281,12 @@ def project_game(
     away_prod = _project_one_team(away_team, home_team, season, week, data,
                                   enforce_activity_filter=enforce_activity_filter)
 
-    # Points
-    home_score = production_to_points(home_prod)
-    away_score = production_to_points(away_prod)
+    # Points. Optional global calibration adds the same constant to both teams,
+    # so it shifts the TOTAL (and O/U) but leaves margin/SU/ATS unchanged.
+    calib = data.get("points_calibration",
+                     POINTS_CALIBRATION_PER_TEAM if DEFAULT_CALIBRATE else 0.0)
+    home_score = production_to_points(home_prod) + calib
+    away_score = production_to_points(away_prod) + calib
     margin = home_score - away_score
     total = home_score + away_score
 

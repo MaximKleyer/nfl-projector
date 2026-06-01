@@ -43,20 +43,23 @@ for grading** ATS/OU — they never anchor the predictions.
 
 ## Performance
 
-Walk-forward backtest on **2023-2025 (816 games)** — the honest sample now that
-2021-2022 are ingested and supply prior-season history for 2023:
+Walk-forward backtest on **2023-2025 (816 games)** with the production model
+(snap-share rosters + per-team TD conversion + total calibration):
 
 | Metric | Value |
 |--------|-------|
-| Margin MAE | 10.93 |
-| SU accuracy | 58.2% |
-| ATS accuracy | 47.8% |
-| O/U accuracy | 48.2% |
-| Total MAE | 10.69 |
+| SU accuracy | 62.2% |
+| ATS accuracy | 50.2% |
+| O/U accuracy | 49.6% |
+| Margin MAE | 10.45 |
+| Total MAE | 10.61 |
+| Total bias | ~0 (calibrated) |
 
-Per season: 2023 SU 54.4%, 2024 SU 60.7%, 2025 SU 59.4% (ATS 53.2%). ATS and O/U
-sit near coin-flip in aggregate — the model's edge is straight-up winners and margin,
-not the betting markets.
+The model's edge is straight-up winners and margin (62% SU, ATS just over
+break-even). O/U stays near coin-flip — totals are the hardest market — but the
+systematic under-bias is calibrated out and efficient offenses are no longer
+under-projected. Build history: snap-share roster (`DESIGN.md` §12), per-team TD
+conversion + calibration (§13).
 
 **Known limitation:** the model needs ~1 full prior season of data to perform.
 The first season of the data window — now **2021** (no 2019-2020 priors) — sits near

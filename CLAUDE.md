@@ -107,9 +107,13 @@ more multiplicative blocks (DESIGN.md §5).
   (`RUSH_VOLUME_CEILING_MULT` 1.20) caps summed RB carries at 1.2× the team's recent baseline
   so the more-inclusive snap-share roster doesn't over-project team rush yards. Both anchor team
   carries to the recent baseline — load-bearing (the ceiling fixed a +3pt total over-projection).
-- **TDs are not projected per player.** Team yards × league TD-per-yard rate
-  (`LEAGUE_PASS_TD_PER_YARD` 0.0062, `LEAGUE_RUSH_TD_PER_YARD` 0.0072) gives implied TDs;
-  points = TDs × 6.95 + FGs × 3 + a flat non-offensive baseline.
+- **TDs are not projected per player.** Team yards × a TD-per-yard rate gives implied TDs.
+  Default (`DEFAULT_TD_RATES="team"`) is each team's own walk-forward TD-per-yard,
+  empirical-Bayes shrunk toward the league rate (`team.py:_team_td_rate`); `--td-rates
+  league` is the flat-rate baseline. `points = TDs × 6.95 + FGs × 3 + non-offensive
+  baseline + a global calibration` (`POINTS_CALIBRATION_PER_TEAM`, added equally to both
+  teams to zero the total under-bias without touching margin/SU/ATS; `--no-calibrate` to
+  disable). See DESIGN.md §13.
 
 ### Vegas lines
 
