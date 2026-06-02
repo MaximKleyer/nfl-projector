@@ -728,7 +728,7 @@ In rough priority order:
 
 4. **Game-script awareness.** The biggest accuracy limitation. Backup QBs with inflated garbage-time stats (e.g. Winston 2024) over-project because the model can't tell "350 yards while trailing by 21" from "350 yards in a competitive game." Would need a way to down-weight stats accumulated in blowouts.
 
-5. **Team-specific FG rates.** Currently a flat league average (2.0). Teams that drive-but-stall (kick more FGs) vs teams that punch it in differ meaningfully. Requires FG data not currently in the warehouse.
+5. **Team-specific FG rates.** ⚠️ **INVESTIGATED — kept flat (2026-06-02).** Built the data + machinery (nflverse per-team-game FGs in a `kicking` warehouse table via `scripts/fetch_kicking.py`; walk-forward EB-shrunk per-team FGs/game in `team.py:_team_fg_rate`, behind `backtest --fg-rates team`), but the A/B (2023-2025) was a **wash/slightly negative**: SU 63.8%→63.4%, ATS 49.3%→49.7%, margin/total MAE flat — all within noise. **Why it doesn't help:** (a) the per-team TD rate (§13) already prices in finishing efficiency (a drive ends in a TD *or* a FG), so FG rate is largely redundant; (b) FGs/game is low-variance and noisy, so after necessary shrinkage the per-team spread compresses to ~1.4–2.0 — under a point of margin between teams. Default stays flat (`DEFAULT_FG_RATES="league"`). The kicking table + distance buckets (`fg_made_0_19`…`fg_made_60_`) are kept for a possible future distance-aware / red-zone model.
 
 6. **Red-zone / per-team TD conversion rates.** ✅ **DONE (2026-06-01).** Implemented as per-team TD-per-yard (empirical-Bayes shrunk toward the league rate, clamped) plus a global total-points calibration; now the production default. Lifted SU 60.5→62.2%, ATS 49.0→50.2%, fixed the high-octane UNDER lean (shootout UNDER% 76→41%), and zeroed the total bias. Full design + A/B in §13.
 
@@ -927,6 +927,52 @@ noise at break-even (Vegas already prices HFA; ATS isn't the model's edge).
 Defaults: `DEFAULT_HOME_FIELD="team"`. A/B the others via
 `backtest --home-field none|league`. This addresses the win-prob calibration gap
 found earlier (model under-confident on home teams) at its source.
+
+---
+
+## 15. Environment (dome) total adjustment
+
+> **Status: implemented & production default (2026-06-02).** Partial delivery of the
+> environment-factors idea (weather/dome). The schedule already carries
+> `dome`, `weather_temp`, `weather_wind`, `surface` (no new ingestion needed).
+
+The bottom-up engine has no venue input, so a game's environment isn't reflected
+in its projected total. We measured the model's **conditional total residuals**
+(actual − predicted total, production config, 2023-2025) by environment:
+
+| Environment | n | residual | usable live? |
+|-------------|---|----------|--------------|
+| Dome / closed roof | 267 | **+1.0** (under-projects) | yes — venue property, 100% populated incl. 2026 |
+| Outdoor | 549 | −0.5 | yes |
+| Wind ≥ 15 mph | 46 | **−4.7** (over-projects) | **no** — no forecast feed; 0% populated for future games |
+| Wind 10-14 | 110 | −2.1 | no |
+| Temp ≤ 32 / > 60 | — | ~+0.3 | noise — dropped |
+
+Two lessons: (1) the *raw* dome effect is +3.3 total, but the model's **residual**
+is only +1.0 — dome teams' baselines already bake in most of it (the same
+"check the residual, not the raw split" lesson as §11 #5). (2) **Wind is the
+bigger uncorrected signal but the least usable** — no live forecast feed, so it
+can't fire for a future-season projection. Temp is noise.
+
+So we ship **dome only**, as a **total-only** adjustment (DOME +1.0 / OUTDOOR −0.5,
+`config.py`), split equally between the two teams in `game.py` so it moves the
+TOTAL / O-U but leaves margin / SU / ATS untouched. The two values are ~mean-zero
+at the league dome rate (~30%), so the §13 total calibration is preserved.
+
+**A/B (816 games, 2023-2025):**
+
+| environment | SU | ATS | O/U | O/U (dome games) | total MAE | total bias |
+|-------------|----|----|-----|------------------|-----------|------------|
+| none | 63.8% | 49.3% | 49.6% | 52.6% | 10.611 | −0.005 |
+| **dome** | 63.8% | 49.3% | **49.9%** | **53.4%** | 10.610 | +0.003 |
+
+SU/ATS/margin/total-bias are unchanged by construction; O/U ticks up (+0.26
+overall, +0.86 on the dome games where it fires). Marginal and within noise, but a
+clean positive on its target with zero downside and no new data cost, so it's the
+default (`DEFAULT_ENVIRONMENT="dome"`; A/B off via `backtest --environment none`).
+**Future work:** wire a weather-forecast feed so the (larger) wind penalty becomes
+usable for in-season prediction — the residuals show ~−2 to −4.7 pts of
+uncorrected over-projection in 10+ mph games.
 
 ---
 

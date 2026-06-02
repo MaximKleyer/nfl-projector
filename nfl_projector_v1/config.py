@@ -53,6 +53,12 @@ LEAGUE_AVG_RECV_CATCH_RATE   = 68.1   # percent
 
 LEAGUE_AVG_NON_OFFENSIVE_POINTS_PER_TEAM = 1.0  # DST TDs + ST TDs + safeties
 
+# FGs made per team-game. The model is a CALIBRATED system: this is the FG
+# contribution that, combined with the per-team TD rates, the non-offensive
+# baseline, and POINTS_CALIBRATION_PER_TEAM, zeros the total bias — not the raw
+# league average (empirically ~1.68 over 2021-2025; see DESIGN.md §11 #5). Kept at
+# 2.0 because the +0.9 calibration is tuned to it; lowering it is a no-op once
+# recalibrated. Also the per-team FG shrink target (`--fg-rates team`).
 LEAGUE_AVG_TEAM_FGS_PER_GAME = 2.0
 
 # ---------------------------------------------------------------------------
@@ -111,6 +117,43 @@ TD_RATE_PRIOR_PASS_YDS = 1200.0
 TD_RATE_PRIOR_RUSH_YDS = 600.0
 # Team rate clamped to [lo, hi] x the league rate as a small-sample safety rail.
 TD_RATE_CLAMP = (0.75, 1.40)
+
+# --- Per-team FG rate (DESIGN.md §11 #5) ------------------------------------
+# "league" = flat LEAGUE_AVG_TEAM_FGS_PER_GAME for every team (baseline).
+# "team"   = each team's own walk-forward FGs/game (from the nflverse `kicking`
+#            table), empirical-Bayes shrunk toward the league rate and clamped.
+#            Unlike the flat rate (which cancels in the margin), per-team FGs
+#            move margin too — a drive-but-stall team (more FGs) vs a punch-it-in
+#            team. team.py:_team_fg_rate.
+# Stays "league" (flat): the A/B (2023-2025) showed per-team FG is a wash/slightly
+# negative (SU 63.8→63.4, all within noise) — the per-team TD rate already captures
+# finishing efficiency, so FG rate is mostly redundant noise (DESIGN.md §11 #5). The
+# per-team path is kept available via `backtest --fg-rates team`.
+DEFAULT_FG_RATES = "league"
+# Shrinkage "prior": games of league-average FG production blended in before a
+# team's own rate is trusted (~one season). Larger = more regression to mean.
+FG_RATE_PRIOR_GAMES = 17
+# Team FG rate clamped to [lo, hi] x the league rate as a small-sample safety rail.
+FG_RATE_CLAMP = (0.5, 1.6)
+
+# --- Environment total adjustment (dome) ------------------------------------
+# The model has no venue input, so it under-projects dome totals and slightly
+# over-projects outdoor ones. Measured CONDITIONAL total residuals (2023-2025):
+# dome +1.0, outdoor -0.5 (most of the raw +3.3 dome effect is already captured
+# by dome teams' baselines). Applied as a TOTAL-only adjustment (split equally
+# between the two teams), so it moves O/U but leaves margin / SU / ATS untouched.
+# The two values are ~mean-zero at the league dome rate (~30%), so the overall
+# total calibration is preserved. `dome` is a venue property (100% populated,
+# incl. future seasons), so this is usable everywhere. Wind/temp are NOT used
+# (wind is the bigger signal but has no live forecast feed; temp is noise).
+# DEFAULT (2026-06-02) after the A/B (2023-2025): "dome" nudged O/U 49.6→49.9%
+# overall and 52.6→53.4% on dome games, with SU/ATS/margin/total-bias UNCHANGED
+# (total-only, as designed). Marginal/within-noise but a clean positive on its
+# target with zero downside and no new data cost. A/B off via `backtest
+# --environment none`. See DESIGN.md §15.
+DEFAULT_ENVIRONMENT = "dome"   # "none" | "dome"
+DOME_TOTAL_ADJUST = 1.0        # points added to a dome/closed-roof game's total
+OUTDOOR_TOTAL_ADJUST = -0.5    # points added to an outdoor game's total
 
 # --- Global total-points calibration ----------------------------------------
 # Additive points per team to remove the model's systematic ~1.8-pt total

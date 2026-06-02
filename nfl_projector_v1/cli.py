@@ -23,6 +23,8 @@ from .config import (
     DEFAULT_TD_RATES,
     DEFAULT_CALIBRATE,
     DEFAULT_HOME_FIELD,
+    DEFAULT_FG_RATES,
+    DEFAULT_ENVIRONMENT,
 )
 
 
@@ -175,6 +177,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         td_rates=args.td_rates,
         calibrate=args.calibrate,
         home_field=args.home_field,
+        fg_rates=args.fg_rates,
+        environment=args.environment,
     )
 
     if result.residuals.empty:
@@ -356,6 +360,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Disable the global total-points calibration (for A/B comparison)")
     p_bt.add_argument("--home-field", choices=["none", "league", "team"], default=DEFAULT_HOME_FIELD,
                       help=f"Home-field advantage: off, flat league (~2pt), or per-team shrunk (default {DEFAULT_HOME_FIELD})")
+    p_bt.add_argument("--fg-rates", choices=["league", "team"], default=DEFAULT_FG_RATES,
+                      help=f"FG conversion: flat league rate or per-team shrunk FGs/game (default {DEFAULT_FG_RATES})")
+    p_bt.add_argument("--environment", choices=["none", "dome"], default=DEFAULT_ENVIRONMENT,
+                      help=f"Environment total adjustment: off, or dome/outdoor nudge (default {DEFAULT_ENVIRONMENT})")
     p_bt.set_defaults(func=cmd_backtest)
 
     # refresh-depth-charts

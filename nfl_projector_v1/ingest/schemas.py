@@ -676,6 +676,26 @@ INJURIES = ReportSchema(
 )
 
 
+KICKING = ReportSchema(
+    name="kicking",
+    filename_pattern="kicking.csv",
+    granularity="team_off",  # one row per team-game (FGs already aggregated)
+    weekly=True,
+    columns=[
+        RequiredColumn("season", "season", "int64"),
+        RequiredColumn("week", "week", "int64"),
+        RequiredColumn("team", "team", "string"),
+        RequiredColumn("fg_made", "fg_made", "float64"),
+        RequiredColumn("fg_att", "fg_att", "float64"),
+    ],
+    notes=(
+        "External. Per-team-game field goals from nflverse stats_player weekly "
+        "kicking, aggregated across kickers (scripts/fetch_kicking.py). Feeds "
+        "the per-team FG rate in team.py (DESIGN.md §11 #5)."
+    ),
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -687,7 +707,7 @@ REPORTS: dict[str, ReportSchema] = {
         SNAPS, ROUTES_RUN, MAN_VS_ZONE, PASSING_DEPTH, RUN_PASS_REPORT,
         FPA_QB, FPA_RB, FPA_WR, FPA_TE,
         COVERAGE_MATRIX_OFF, COVERAGE_MATRIX_DEF, LINE_MATCHUPS,
-        SCHEDULE, VEGAS, INJURIES,
+        SCHEDULE, VEGAS, INJURIES, KICKING,
     ]
 }
 

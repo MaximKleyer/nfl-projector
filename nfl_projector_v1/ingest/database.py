@@ -98,10 +98,10 @@ def _ingest_season(season: int, raw_dir: Path) -> dict[str, pd.DataFrame]:
 
 
 def _ingest_external(raw_dir: Path) -> dict[str, pd.DataFrame]:
-    """Read schedule.csv, vegas.csv, and injuries.csv from data/raw/external/."""
+    """Read schedule.csv, vegas.csv, injuries.csv, kicking.csv from data/raw/external/."""
     out = {}
     ext_dir = raw_dir / "external"
-    for report_name in ("schedule", "vegas", "injuries"):
+    for report_name in ("schedule", "vegas", "injuries", "kicking"):
         path = ext_dir / REPORTS[report_name].filename_pattern
         if not path.exists():
             warnings.warn(f"External file missing: {path}")

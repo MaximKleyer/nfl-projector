@@ -36,7 +36,7 @@ python -m nfl_projector_v1 predict-season --season 2026
 # Walk-forward backtest over one or more seasons (this is the regression check — see below)
 python -m nfl_projector_v1 backtest --seasons 2024 2025
 python -m nfl_projector_v1 backtest --seasons 2024 2025 --min-week 14 --max-week 15   # quick slice
-# A/B knobs (all default to production): --roster-mode, --td-rates, --calibrate/--no-calibrate, --home-field
+# A/B knobs (all default to production): --roster-mode, --td-rates, --calibrate/--no-calibrate, --home-field, --fg-rates, --environment
 
 # Refresh depth charts from nflverse (needs network; do this before predicting a new week)
 python -m nfl_projector_v1 refresh-depth-charts --seasons 2025
@@ -125,6 +125,11 @@ more multiplicative blocks (DESIGN.md §5).
   (home `+h/2`, away `−h/2`) so it moves margin/SU/win-prob but leaves the calibrated total
   alone. `DEFAULT_HOME_FIELD="team"` (won the A/B: SU 62.2→63.8); `--home-field none|league`
   to compare. See DESIGN.md §14.
+- **Environment / dome** (`game.py:_environment_total_adjust`). A **total-only** nudge from the
+  schedule's `dome` flag (DOME +1.0 / OUTDOOR −0.5, mean-centered), split equally between teams
+  so it moves O/U but not margin/SU/ATS. Corrects a measured conditional total bias (the model
+  under-projects domes). `DEFAULT_ENVIRONMENT="dome"`; `--environment none` to disable. Wind/temp
+  are deliberately unused (wind has no live forecast feed; temp is noise). See DESIGN.md §15.
 
 ### Vegas lines
 

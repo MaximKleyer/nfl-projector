@@ -23,9 +23,10 @@ import math
 import pandas as pd
 
 from .config import (
-    NFL_MARGIN_STD_DEV, DEFAULT_ROSTER_MODE, DEFAULT_TD_RATES,
+    NFL_MARGIN_STD_DEV, DEFAULT_ROSTER_MODE, DEFAULT_TD_RATES, DEFAULT_FG_RATES,
     POINTS_CALIBRATION_PER_TEAM, DEFAULT_CALIBRATE,
     DEFAULT_HOME_FIELD, LEAGUE_HFA, HFA_SHRINKAGE_GAMES, HFA_CLAMP,
+    DEFAULT_ENVIRONMENT, DOME_TOTAL_ADJUST, OUTDOOR_TOTAL_ADJUST,
 )
 from .data.roster import Player, get_active_roster
 from .projections.qb import project_qb_line, QBProjection
@@ -220,6 +221,37 @@ def _home_field_points(home_team: str, season: int, data: dict) -> float:
     return float(cache[season].get(home_team, LEAGUE_HFA))
 
 
+def _environment_total_adjust(
+    home_team: str, away_team: str, season: int, week: int, data: dict,
+) -> float:
+    """Total-points adjustment for this game's environment, per data["environment"].
+
+    "dome" mode nudges the game TOTAL by the measured conditional residual: up in
+    a dome/closed-roof game, slightly down outdoors (mean-zero at the league dome
+    rate, so overall calibration is preserved). Returns points to ADD to the total;
+    the caller splits it equally between the two teams so margin/SU/ATS are
+    unchanged. 0 if the mode is off or the game's dome flag is unknown.
+    """
+    mode = data.get("environment", DEFAULT_ENVIRONMENT)
+    if mode != "dome":
+        return 0.0
+    sched = data.get("schedule")
+    if sched is None or sched.empty or "dome" not in sched.columns:
+        return 0.0
+    row = sched[
+        (sched["season"] == season) & (sched["week"] == week)
+        & (sched["home_team"] == home_team) & (sched["away_team"] == away_team)
+    ]
+    if row.empty:
+        return 0.0
+    dome = pd.to_numeric(row.iloc[0]["dome"], errors="coerce")
+    if dome == 1:
+        return DOME_TOTAL_ADJUST
+    if dome == 0:
+        return OUTDOOR_TOTAL_ADJUST
+    return 0.0
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -309,6 +341,8 @@ def _project_one_team(
         rb_history=data.get("rb_history"),
         qb_history=data.get("qb_history"),
         td_rates=data.get("td_rates", DEFAULT_TD_RATES),
+        kicking_df=data.get("kicking"),
+        fg_rates=data.get("fg_rates", DEFAULT_FG_RATES),
     )
 
 
@@ -354,6 +388,12 @@ def project_game(
     hfa = _home_field_points(home_team, season, data)
     home_score += hfa / 2.0
     away_score -= hfa / 2.0
+
+    # Environment (dome): total-only adjustment split equally between both teams,
+    # so it moves the TOTAL / O-U but leaves margin / SU / ATS unchanged.
+    env_adj = _environment_total_adjust(home_team, away_team, season, week, data)
+    home_score += env_adj / 2.0
+    away_score += env_adj / 2.0
 
     margin = home_score - away_score
     total = home_score + away_score

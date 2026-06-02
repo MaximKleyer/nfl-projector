@@ -33,6 +33,9 @@ from ..config import (
     TD_RATE_PRIOR_PASS_YDS,
     TD_RATE_PRIOR_RUSH_YDS,
     TD_RATE_CLAMP,
+    DEFAULT_FG_RATES,
+    FG_RATE_PRIOR_GAMES,
+    FG_RATE_CLAMP,
 )
 from .qb import QBProjection
 from .rb import RBProjection
@@ -69,28 +72,51 @@ class TeamProduction:
     rush_volume_scaling: float = 1.0           # if backups got scaled up, ratio applied
 
 
-def _team_recent_fgs_per_game(
+def _team_fg_rate(
+    kicking_df: Optional[pd.DataFrame],
+    schedule_df: Optional[pd.DataFrame],
     team: str,
     season: int,
     week: int,
-    schedule_df: pd.DataFrame,
-    n_recent: int = 4,
+    league_fg: float = LEAGUE_AVG_TEAM_FGS_PER_GAME,
+    prior_games: float = FG_RATE_PRIOR_GAMES,
+    clamp: tuple = FG_RATE_CLAMP,
 ) -> float:
-    """Estimate the team's expected FGs per game.
+    """A team's FGs made per game, computed walk-forward (REG-season games
+    STRICTLY before (season, week)) and empirical-Bayes shrunk toward the league
+    rate:
 
-    Walk-forward correct (only games STRICTLY before this week).
+        rate = (team_FGs_made + league_fg * prior_games) / (team_games + prior_games)
 
-    For v1 we don't have a clean per-team FGs/game stat in the warehouse
-    (the schedule has scores, not FGs separately). Use league average for
-    now — a known v1 simplification documented in DESIGN.md.
-
-    If/when we wire kicker data or scoring-type breakdowns, replace this
-    function. Everything else in team.py is independent of the FG model.
+    FGs made come from the nflverse `kicking` table; games played from the
+    schedule (so a team-week with zero FG attempts still counts as a game).
+    Shrinkage keeps thin early-season samples sane; the result is clamped to
+    [lo, hi] x league_fg and falls back to league_fg when there's no history.
+    Unlike a flat FG count, this varies by team, so it shifts the margin between
+    a drive-but-stall offense and a punch-it-in one.
     """
-    # Placeholder: league average.
-    # TODO v2: compute team-specific rolling FGs/game from a FG data source.
-    _ = (team, season, week, schedule_df, n_recent)  # silence linters
-    return LEAGUE_AVG_TEAM_FGS_PER_GAME
+    if (kicking_df is None or kicking_df.empty
+            or schedule_df is None or schedule_df.empty
+            or "fg_made" not in kicking_df.columns):
+        return league_fg
+    s = schedule_df
+    played = s[
+        ((s["season"] < season) | ((s["season"] == season) & (s["week"] < week)))
+        & s["home_score"].notna() & s["away_score"].notna()
+        & (s["week"] >= 1) & (s["week"] <= 18)
+    ]
+    n_games = int(((played["home_team"] == team) | (played["away_team"] == team)).sum())
+    if n_games <= 0:
+        return league_fg
+    k = kicking_df
+    team_fg = float(k[
+        (k["team"] == team)
+        & ((k["season"] < season) | ((k["season"] == season) & (k["week"] < week)))
+        & (k["week"] >= 1) & (k["week"] <= 18)
+    ]["fg_made"].sum())
+    rate = (team_fg + league_fg * prior_games) / (n_games + prior_games)
+    lo, hi = clamp
+    return max(league_fg * lo, min(league_fg * hi, rate))
 
 
 def _team_recent_rush_attempts(
@@ -190,6 +216,8 @@ def aggregate_to_team(
     rb_history: Optional[pd.DataFrame] = None,
     qb_history: Optional[pd.DataFrame] = None,
     td_rates: str = DEFAULT_TD_RATES,
+    kicking_df: Optional[pd.DataFrame] = None,
+    fg_rates: str = DEFAULT_FG_RATES,
 ) -> TeamProduction:
     """Aggregate player projections into TeamProduction.
 
@@ -387,8 +415,13 @@ def aggregate_to_team(
     rush_tds = team_rush_yards * rush_rate
     total_tds = pass_tds + rush_tds
 
-    # ---- FGs (placeholder league average for v1) ----
-    fgs = _team_recent_fgs_per_game(team, season, week, schedule_df)
+    # ---- FGs ----
+    # "league" = flat league average for all; "team" = each team's own walk-forward,
+    # shrunk FGs/game (drive-but-stall teams kick more — DESIGN.md §11 #5).
+    if fg_rates == "team":
+        fgs = _team_fg_rate(kicking_df, schedule_df, team, season, week)
+    else:
+        fgs = LEAGUE_AVG_TEAM_FGS_PER_GAME
 
     return TeamProduction(
         team=team,

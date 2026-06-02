@@ -131,6 +131,22 @@ def load_snaps(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Kicking (nflverse, one row per team-game: field goals made/attempted)
+# ---------------------------------------------------------------------------
+
+def load_kicking(con: duckdb.DuckDBPyConnection) -> Optional[pd.DataFrame]:
+    """Per-team-game field goals from nflverse (scripts/fetch_kicking.py).
+
+    Columns: season, week, team (normalized), fg_made, fg_att. Used by
+    team.py:_team_fg_rate for per-team FG conversion. None if not yet ingested.
+    """
+    try:
+        return con.execute("SELECT * FROM kicking").df()
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # QB starter overrides (manual YAML, not from the warehouse)
 # ---------------------------------------------------------------------------
 
@@ -159,7 +175,7 @@ def load_all(warehouse_path: str | Path | None = None) -> dict:
         schedule, vegas, injuries,
         qb_history, rb_history, recv_history,
         pass_defense, rush_defense, recv_defense,
-        snaps, qb_starters
+        snaps, kicking, qb_starters
     """
     con = open_warehouse(warehouse_path)
     try:
@@ -174,6 +190,7 @@ def load_all(warehouse_path: str | Path | None = None) -> dict:
             "rush_defense": load_rush_defense(con),
             "recv_defense": load_recv_defense(con),
             "snaps": load_snaps(con),
+            "kicking": load_kicking(con),
             "qb_starters": load_qb_starters(),
         }
     finally:

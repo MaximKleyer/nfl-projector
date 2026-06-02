@@ -28,8 +28,9 @@ aggregate to team              →  pass yards (QB anchor) allocated across
                                   rush yards = RBs + QB scrambles
 production → points             →  TDs via per-team TD-per-yard, FGs, DST/ST
                                   baseline, global total calibration
-two teams → game               →  per-team home-field shift → margin, total,
-                                  win prob, ATS/OU picks
+two teams → game               →  per-team home-field shift (margin) +
+                                  dome total nudge → margin, total, win prob,
+                                  ATS/OU picks
 ```
 
 Each projected stat follows the same recipe:
@@ -47,13 +48,13 @@ for grading** ATS/OU — they never anchor the predictions.
 
 Walk-forward backtest on **2023-2025 (816 games)** with the production model
 (snap-share rosters + per-team TD conversion + total calibration + per-team
-home-field advantage):
+home-field advantage + dome total adjustment):
 
 | Metric | Value |
 |--------|-------|
 | SU accuracy | 63.8% |
 | ATS accuracy | 49.3% |
-| O/U accuracy | 49.6% |
+| O/U accuracy | 49.9% |
 | Margin MAE | 10.40 |
 | Total MAE | 10.61 |
 | Total bias | ~0 (calibrated) |
@@ -157,9 +158,11 @@ DESIGN.md                full design doc + results + future work
 v1 is complete and operational, with **2021-2025 ingested**. Shipped since the
 initial build (see `DESIGN.md`): the 2021-2022 backfill that fixed the 2023
 cold-start (§10/§11), FPD snap-share rosters (§12), per-team TD conversion +
-total calibration (§13), per-team home-field advantage (§14), and the
-`predict-season` full-season projection.
+total calibration (§13), per-team home-field advantage (§14), a dome total
+adjustment (§15), and the `predict-season` full-season projection.
 
 Remaining planned enhancements (`DESIGN.md` §11): game-script awareness for
-backup-QB over-projection, team-specific FG rates, a cross-time team comparison
-command, and QB cross-team history weighting.
+backup-QB over-projection, a cross-time team comparison command, and QB
+cross-team history weighting. Per-team FG rates were investigated and didn't beat
+flat (§11 #5); a **wind** total penalty is promising (~−2 to −4.7 pts in 10+ mph
+games) but needs a weather-forecast feed to be usable live (§15).
