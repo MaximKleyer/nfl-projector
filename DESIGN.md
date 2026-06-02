@@ -671,21 +671,29 @@ Backtested walk-forward over **2023-2025 (816 games)** — the honest benchmark,
 2021-2022 supply prior-season history for 2023. (2021-2022 are used only as history, not
 graded: 2021 is now the cold-start season.)
 
-### Benchmark — 2023-2025, 816 games (post-backfill)
+### Benchmark — 2023-2025, 816 games
 
-| Metric | Value |
-|--------|-------|
-| Margin MAE | 10.93 |
-| Margin RMSE | 14.25 |
-| Total MAE | 10.69 |
-| SU accuracy | 58.2% |
-| ATS accuracy | 47.8% |
-| O/U accuracy | 48.2% |
-| Total bias | ~-1.8 points/game (still slightly under) |
+The table below is the **current production model** (snap-share rosters §12 +
+per-team TD conversion & calibration §13 + per-team home-field advantage §14).
+The original post-backfill baseline — depth-chart rosters, flat TD rate, no
+calibration, no HFA — was SU 58.2% / ATS 47.8% / margin MAE 10.93 / total bias
+−1.8. The progression from there is traced in §12.8 → §13 → §14.
 
-Per season: **2023 SU 54.4%** (now has priors — up from ~52.6% cold-start),
-**2024 SU 60.7%**, **2025 SU 59.4% / ATS 53.2%**. ATS and O/U remain near coin-flip in
-aggregate — the model's edge is SU and margin, not the betting markets.
+| Metric | Baseline (2026-05-29) | Production (2026-06-02) |
+|--------|-----------------------|--------------------------|
+| SU accuracy | 58.2% | **63.8%** |
+| ATS accuracy | 47.8% | 49.3% |
+| O/U accuracy | 48.2% | 49.6% |
+| Margin MAE | 10.93 | **10.40** |
+| Total MAE | 10.69 | 10.61 |
+| Total bias | −1.8 pts/game | **~0 (calibrated)** |
+| Home-margin bias | — | +0.26 (HFA-corrected, was +2.30) |
+
+Per season (production): **2023 SU 59.2%**, **2024 SU 65.8%**, **2025 SU 66.4%**.
+2023 is weakest because it derives per-team TD/HFA rates from only 2021-2022;
+the edge sharpens as walk-forward history accrues. ATS and O/U remain near
+coin-flip in aggregate — the model's edge is SU and margin, not the betting
+markets (Vegas already prices the same signals).
 
 ### Key findings
 
@@ -725,6 +733,10 @@ In rough priority order:
 6. **Red-zone / per-team TD conversion rates.** ✅ **DONE (2026-06-01).** Implemented as per-team TD-per-yard (empirical-Bayes shrunk toward the league rate, clamped) plus a global total-points calibration; now the production default. Lifted SU 60.5→62.2%, ATS 49.0→50.2%, fixed the high-octane UNDER lean (shootout UNDER% 76→41%), and zeroed the total bias. Full design + A/B in §13.
 
 7. **QB cross-team history.** When a QB changes teams (e.g. Wilson DEN → PIT), we currently use his recent games regardless of team context. Could weight by scheme/team fit.
+
+8. **Per-team home-field advantage.** ✅ **DONE (2026-06-02).** The bottom-up engine had no home/away input (predicted home win ~48% vs reality ~54%; home-margin bias +2.30). Added a walk-forward, shrunk-and-clamped per-team home margin applied as a total-preserving margin shift. Lifted SU 62.2→63.8% and zeroed the home-margin bias, leaving the total calibration untouched. Now the default. Full design + A/B in §14.
+
+9. **Full-season projection (`predict-season`).** ✅ **DONE (2026-06-02).** Projects every game of a season with the production engine, then aggregates to per-team expected wins, SU record, and Monte Carlo division-title / playoff odds (`season.py`). Built to project the 2026 season off the ingested schedule; sharpens as in-season data arrives.
 
 ## 12. Snap-share roster & injury-aware recency
 

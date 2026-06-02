@@ -30,9 +30,13 @@ python -m nfl_projector_v1 status
 # Predict every game in a week (prints a table + writes a CSV). Works for future weeks.
 python -m nfl_projector_v1 predict --season 2025 --week 16
 
+# Project a full season: per-team expected wins + Monte Carlo division/playoff odds
+python -m nfl_projector_v1 predict-season --season 2026
+
 # Walk-forward backtest over one or more seasons (this is the regression check — see below)
 python -m nfl_projector_v1 backtest --seasons 2024 2025
 python -m nfl_projector_v1 backtest --seasons 2024 2025 --min-week 14 --max-week 15   # quick slice
+# A/B knobs (all default to production): --roster-mode, --td-rates, --calibrate/--no-calibrate, --home-field
 
 # Refresh depth charts from nflverse (needs network; do this before predicting a new week)
 python -m nfl_projector_v1 refresh-depth-charts --seasons 2025
@@ -41,8 +45,8 @@ python -m nfl_projector_v1 refresh-depth-charts --seasons 2025
 python scripts/build_database.py --seasons 2023 2024 2025
 ```
 
-The four CLI subcommands are `predict`, `backtest`, `refresh-depth-charts`, `status`
-(wired in [cli.py](nfl_projector_v1/cli.py)). The entry point is `python -m nfl_projector_v1`.
+The five CLI subcommands are `predict`, `predict-season`, `backtest`, `refresh-depth-charts`,
+`status` (wired in [cli.py](nfl_projector_v1/cli.py)). The entry point is `python -m nfl_projector_v1`.
 
 ### Tests
 

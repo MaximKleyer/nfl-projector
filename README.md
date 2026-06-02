@@ -17,7 +17,7 @@ The model is **bottom-up**: it builds team scores from individual player
 projections rather than predicting team scores directly.
 
 ```
-depth charts + injuries        →  who plays this week (active roster)
+snap share + injuries + depth  →  who plays this week (active roster)
 player game logs (rolling)     →  each player's projected stat line
   · QB: attempts, YPA, pass yards (the team passing anchor), scrambles, sacks
   · RB: carries, YPC, rush yards, plus receiving target share
@@ -26,8 +26,10 @@ matchup + injury adjustments   →  each stat × opponent factor × health facto
 aggregate to team              →  pass yards (QB anchor) allocated across
                                   receivers by efficiency-weighted target share;
                                   rush yards = RBs + QB scrambles
-production → points             →  TDs via league TD-per-yard, FGs, DST/ST baseline
-two teams → game               →  margin, total, win prob, ATS/OU picks
+production → points             →  TDs via per-team TD-per-yard, FGs, DST/ST
+                                  baseline, global total calibration
+two teams → game               →  per-team home-field shift → margin, total,
+                                  win prob, ATS/OU picks
 ```
 
 Each projected stat follows the same recipe:
@@ -100,6 +102,9 @@ python scripts/build_database.py --seasons 2021 2022 2023 2024 2025
 # Predict every game in a week (prints + writes a CSV)
 python -m nfl_projector_v1 predict --season 2025 --week 16
 
+# Project a full season: per-team expected wins + division/playoff odds
+python -m nfl_projector_v1 predict-season --season 2026
+
 # Walk-forward backtest
 python -m nfl_projector_v1 backtest --seasons 2024 2025
 
@@ -110,9 +115,11 @@ python -m nfl_projector_v1 refresh-depth-charts --seasons 2025
 python -m nfl_projector_v1 status
 ```
 
-`predict` works for future weeks too — it doesn't need actual scores, only the
-scheduled matchups and current depth charts. Run `refresh-depth-charts` first to
-pull the latest rosters.
+`predict` and `predict-season` work for future weeks/seasons too — they don't
+need actual scores, only the scheduled matchups and current depth charts. Run
+`refresh-depth-charts` first to pull the latest rosters. The A/B knobs
+(`--roster-mode`, `--td-rates`, `--calibrate/--no-calibrate`, `--home-field`)
+default to the production config; override them on any command to compare.
 
 ## Project layout
 
@@ -120,12 +127,13 @@ pull the latest rosters.
 nfl_projector_v1/
   config.py              league constants, paths
   cli.py                 command-line interface
-  game.py                game orchestrator → GamePrediction
+  game.py                game orchestrator → GamePrediction (+ home-field shift)
+  season.py              full-season projection → standings + div/playoff odds
   backtest.py            walk-forward backtest harness
   data/
     loaders.py           warehouse → DataFrames
-    depth_charts.py      nflverse depth charts (handles 2023-24 + 2025+ schemas)
-    roster.py            active-roster identification
+    depth_charts.py      nflverse depth charts (QB path + no-snap fallback)
+    roster.py            active-roster identification (FPD snap share)
   projections/
     base.py              the 4 shared projection helpers
     qb.py                QB stat-line projection
@@ -146,7 +154,12 @@ DESIGN.md                full design doc + results + future work
 
 ## Status & roadmap
 
-v1 is complete and operational, with **2021-2025 ingested** — the 2021-2022 backfill
-that fixed the 2023 cold-start is done (see `DESIGN.md` §10/§11). Remaining planned
-enhancements (`DESIGN.md` §11): game-script awareness for backup-QB over-projection,
-team-specific FG and red-zone TD rates, and a cross-time team comparison command.
+v1 is complete and operational, with **2021-2025 ingested**. Shipped since the
+initial build (see `DESIGN.md`): the 2021-2022 backfill that fixed the 2023
+cold-start (§10/§11), FPD snap-share rosters (§12), per-team TD conversion +
+total calibration (§13), per-team home-field advantage (§14), and the
+`predict-season` full-season projection.
+
+Remaining planned enhancements (`DESIGN.md` §11): game-script awareness for
+backup-QB over-projection, team-specific FG rates, a cross-time team comparison
+command, and QB cross-team history weighting.
