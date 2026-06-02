@@ -2,6 +2,7 @@
 
 Sub-commands:
   predict              Project all games in a given week (print + CSV)
+  predict-season       Project a full season: standings + division/playoff odds
   backtest             Run the walk-forward backtest over seasons
   refresh-depth-charts Re-download depth chart CSVs from nflverse
   status               Sanity-check that warehouse + depth charts are present
@@ -21,6 +22,7 @@ from .config import (
     DEFAULT_ROSTER_MODE,
     DEFAULT_TD_RATES,
     DEFAULT_CALIBRATE,
+    DEFAULT_HOME_FIELD,
 )
 
 
@@ -99,6 +101,7 @@ def cmd_predict(args: argparse.Namespace) -> int:
     _enable_ansi_colors()
     print(f"Loading warehouse...")
     data = load_all()
+    data["home_field"] = args.home_field
 
     schedule = data["schedule"]
     games = schedule[
@@ -171,6 +174,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         roster_mode=args.roster_mode,
         td_rates=args.td_rates,
         calibrate=args.calibrate,
+        home_field=args.home_field,
     )
 
     if result.residuals.empty:
@@ -185,6 +189,41 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     suffix = args.suffix if args.suffix else ""
     paths = write_backtest_outputs(result, suffix=suffix)
     print(f"\nWrote: {list(paths.values())}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# predict-season
+# ---------------------------------------------------------------------------
+
+def cmd_predict_season(args: argparse.Namespace) -> int:
+    """Project a full season: per-team expected wins + division/playoff odds."""
+    from .season import project_season
+
+    result = project_season(
+        args.season, min_week=args.min_week, max_week=args.max_week,
+        n_sims=args.sims, verbose=True, home_field=args.home_field,
+    )
+    st = result.standings
+
+    print(f"\n=== {args.season} projected standings "
+          f"(expected W-L; {args.sims:,} sims for odds) ===")
+    for div, grp in st.groupby("division", sort=False):
+        print(f"\n{div}")
+        for r in grp.itertuples():
+            print(f"  {r.team:4s} {r.exp_wins:4.1f}-{r.exp_losses:<4.1f}  "
+                  f"div {r.div_title_pct:5.1f}%   playoff {r.playoff_pct:5.1f}%   "
+                  f"(SU {r.su_wins}-{r.su_losses})")
+
+    out_dir = Path(args.out_dir) if args.out_dir else DEFAULT_OUTPUT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    st_path = out_dir / f"season_standings_{args.season}.csv"
+    st.to_csv(st_path, index=False)
+    print(f"\nWrote standings: {st_path}")
+    if not args.no_games_csv:
+        g_path = out_dir / f"season_games_{args.season}.csv"
+        result.games.to_csv(g_path, index=False)
+        print(f"Wrote per-game projections: {g_path}")
     return 0
 
 
@@ -280,7 +319,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_pred.add_argument("--week", type=int, required=True, help="Week number, 1-18")
     p_pred.add_argument("--out-dir", type=str, default=None,
                         help="Where to write the predictions CSV (default: config output dir)")
+    p_pred.add_argument("--home-field", choices=["none", "league", "team"], default=DEFAULT_HOME_FIELD,
+                        help=f"Home-field advantage: off, flat league, or per-team (default {DEFAULT_HOME_FIELD})")
     p_pred.set_defaults(func=cmd_predict)
+
+    # predict-season
+    p_ps = sub.add_parser("predict-season",
+                          help="Project a full season: standings + division/playoff odds")
+    p_ps.add_argument("--season", type=int, required=True, help="Season year, e.g. 2026")
+    p_ps.add_argument("--min-week", type=int, default=1, help="First week (default 1)")
+    p_ps.add_argument("--max-week", type=int, default=18, help="Last week (default 18)")
+    p_ps.add_argument("--sims", type=int, default=10000,
+                      help="Monte Carlo sims for division/playoff odds (default 10000)")
+    p_ps.add_argument("--out-dir", type=str, default=None,
+                      help="Where to write the season CSVs (default: config output dir)")
+    p_ps.add_argument("--no-games-csv", action="store_true",
+                      help="Skip writing the per-game projections CSV")
+    p_ps.add_argument("--home-field", choices=["none", "league", "team"], default=DEFAULT_HOME_FIELD,
+                      help=f"Home-field advantage: off, flat league, or per-team (default {DEFAULT_HOME_FIELD})")
+    p_ps.set_defaults(func=cmd_predict_season)
 
     # backtest
     p_bt = sub.add_parser("backtest", help="Run walk-forward backtest")
@@ -297,6 +354,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help=f"Apply the global total-points calibration (default {DEFAULT_CALIBRATE}; fixes total bias, leaves margin/SU/ATS unchanged)")
     p_bt.add_argument("--no-calibrate", dest="calibrate", action="store_false",
                       help="Disable the global total-points calibration (for A/B comparison)")
+    p_bt.add_argument("--home-field", choices=["none", "league", "team"], default=DEFAULT_HOME_FIELD,
+                      help=f"Home-field advantage: off, flat league (~2pt), or per-team shrunk (default {DEFAULT_HOME_FIELD})")
     p_bt.set_defaults(func=cmd_backtest)
 
     # refresh-depth-charts

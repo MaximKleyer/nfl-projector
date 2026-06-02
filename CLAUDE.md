@@ -114,6 +114,13 @@ more multiplicative blocks (DESIGN.md §5).
   baseline + a global calibration` (`POINTS_CALIBRATION_PER_TEAM`, added equally to both
   teams to zero the total under-bias without touching margin/SU/ATS; `--no-calibrate` to
   disable). See DESIGN.md §13.
+- **Home-field advantage** (`game.py`). The bottom-up engine has no home/away input, so it
+  carried ~zero HFA (predicted home win 48% vs reality 54%). `compute_team_hfa` derives each
+  team's walk-forward home margin (mean home-margin − mean away-margin, /2), empirical-Bayes
+  shrunk toward `LEAGUE_HFA` (2.0) and clamped. Applied as a **total-preserving margin shift**
+  (home `+h/2`, away `−h/2`) so it moves margin/SU/win-prob but leaves the calibrated total
+  alone. `DEFAULT_HOME_FIELD="team"` (won the A/B: SU 62.2→63.8); `--home-field none|league`
+  to compare. See DESIGN.md §14.
 
 ### Vegas lines
 

@@ -24,7 +24,7 @@ import pandas as pd
 
 from .config import (
     DEFAULT_OUTPUT_DIR, DEFAULT_ROSTER_MODE, DEFAULT_TD_RATES,
-    POINTS_CALIBRATION_PER_TEAM, DEFAULT_CALIBRATE,
+    POINTS_CALIBRATION_PER_TEAM, DEFAULT_CALIBRATE, DEFAULT_HOME_FIELD,
 )
 from .data.loaders import load_all
 from .game import project_game, GamePrediction
@@ -185,6 +185,7 @@ def walk_forward_backtest(
     roster_mode: str = DEFAULT_ROSTER_MODE,
     td_rates: str = DEFAULT_TD_RATES,
     calibrate: bool = DEFAULT_CALIBRATE,
+    home_field: str = DEFAULT_HOME_FIELD,
 ) -> BacktestResult:
     """Run a walk-forward backtest over the specified seasons and week range.
 
@@ -207,6 +208,8 @@ def walk_forward_backtest(
     data["roster_mode"] = roster_mode
     data["td_rates"] = td_rates
     data["points_calibration"] = POINTS_CALIBRATION_PER_TEAM if calibrate else 0.0
+    data["home_field"] = home_field
+    data.pop("_team_hfa_cache", None)   # recompute per-season HFA for this run's mode
 
     schedule = data["schedule"]
     # Filter to test seasons + week range, must have actual scores

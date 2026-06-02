@@ -44,22 +44,27 @@ for grading** ATS/OU — they never anchor the predictions.
 ## Performance
 
 Walk-forward backtest on **2023-2025 (816 games)** with the production model
-(snap-share rosters + per-team TD conversion + total calibration):
+(snap-share rosters + per-team TD conversion + total calibration + per-team
+home-field advantage):
 
 | Metric | Value |
 |--------|-------|
-| SU accuracy | 62.2% |
-| ATS accuracy | 50.2% |
+| SU accuracy | 63.8% |
+| ATS accuracy | 49.3% |
 | O/U accuracy | 49.6% |
-| Margin MAE | 10.45 |
+| Margin MAE | 10.40 |
 | Total MAE | 10.61 |
 | Total bias | ~0 (calibrated) |
+| Home-margin bias | +0.26 (HFA-corrected, was +2.30) |
 
-The model's edge is straight-up winners and margin (62% SU, ATS just over
-break-even). O/U stays near coin-flip — totals are the hardest market — but the
-systematic under-bias is calibrated out and efficient offenses are no longer
-under-projected. Build history: snap-share roster (`DESIGN.md` §12), per-team TD
-conversion + calibration (§13).
+The model's edge is straight-up winners and margin (64% SU). O/U stays near
+coin-flip — totals are the hardest market — but the systematic under-bias is
+calibrated out and efficient offenses are no longer under-projected. The
+per-team home-field term lifted SU +1.6 pts and nearly zeroed the home-margin
+bias the bottom-up engine carried (it had ~zero built-in HFA). ATS sits just
+under break-even — never the model's edge (Vegas prices HFA). Build history:
+snap-share roster (`DESIGN.md` §12), per-team TD conversion + calibration (§13),
+per-team home-field advantage (§14).
 
 **Known limitation:** the model needs ~1 full prior season of data to perform.
 The first season of the data window — now **2021** (no 2019-2020 priors) — sits near

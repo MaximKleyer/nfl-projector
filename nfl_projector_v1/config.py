@@ -121,6 +121,38 @@ TD_RATE_CLAMP = (0.75, 1.40)
 POINTS_CALIBRATION_PER_TEAM = 0.9
 DEFAULT_CALIBRATE = True
 
+# --- Home-field advantage (DESIGN.md §14) -----------------------------------
+# The bottom-up engine has no home/away input, so it predicts home teams to win
+# ~49.8% of the time when reality is ~54.5% (2021-2025: avg home margin +2.25,
+# home-win rate .545). HFA closes that gap. It's applied as a TOTAL-PRESERVING
+# margin shift in game.py — home += h/2, away -= h/2 — so it moves margin / SU /
+# win-prob WITHOUT disturbing the calibrated total (O/U untouched).
+#
+# Mode is set per-run via data["home_field"]:
+#   "none"   = no HFA (the bottom-up baseline; what the model did before §14)
+#   "league" = flat LEAGUE_HFA for every home team
+#   "team"   = each team's own walk-forward home margin, empirical-Bayes shrunk
+#              toward LEAGUE_HFA and clamped (game.py:compute_team_hfa)
+# DEFAULT (2026-06-02) after the A/B over 2023-2025 (production roster/TD/calib):
+#   none → league → team SU = 62.2% → 62.9% → 63.8%; home-margin bias +2.30 →
+#   +0.30 → +0.26; total MAE / O/U identical (total-preserving, as designed).
+#   Per-team beat flat league on SU (+0.9) at no cost, so it's the default.
+#   A/B the others via `backtest --home-field none|league`.
+DEFAULT_HOME_FIELD = "team"
+
+# League-average home-field margin (points). 2021-2025 empirical ≈ 2.25; 2.0 is
+# a slightly conservative round value (recent seasons trend a touch lower).
+LEAGUE_HFA = 2.0
+
+# Empirical-Bayes prior strength for per-team HFA, in games. A team's raw home
+# margin is blended as raw*n/(n+K) + league*K/(n+K). ~8-9 home games/season makes
+# raw per-team HFA noisy (SE ≈ ±1.5 pt), so K is deliberately large (heavy
+# regression toward the league value); the per-team spread is a gentle tilt.
+HFA_SHRINKAGE_GAMES = 50
+
+# Per-team HFA clamped to this band (points) as a small-sample safety rail.
+HFA_CLAMP = (0.5, 3.0)
+
 # ---------------------------------------------------------------------------
 # File paths
 # ---------------------------------------------------------------------------

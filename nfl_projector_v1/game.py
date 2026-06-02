@@ -25,6 +25,7 @@ import pandas as pd
 from .config import (
     NFL_MARGIN_STD_DEV, DEFAULT_ROSTER_MODE, DEFAULT_TD_RATES,
     POINTS_CALIBRATION_PER_TEAM, DEFAULT_CALIBRATE,
+    DEFAULT_HOME_FIELD, LEAGUE_HFA, HFA_SHRINKAGE_GAMES, HFA_CLAMP,
 )
 from .data.roster import Player, get_active_roster
 from .projections.qb import project_qb_line, QBProjection
@@ -160,6 +161,66 @@ def _over_probability(
 
 
 # ---------------------------------------------------------------------------
+# Home-field advantage (DESIGN.md §14)
+# ---------------------------------------------------------------------------
+
+def compute_team_hfa(
+    schedule_df: Optional[pd.DataFrame],
+    before_season: int,
+    league_hfa: float = LEAGUE_HFA,
+    k: float = HFA_SHRINKAGE_GAMES,
+    clamp: tuple[float, float] = HFA_CLAMP,
+) -> dict[str, float]:
+    """Per-team home-field advantage (margin points) from completed games
+    STRICTLY BEFORE `before_season` — walk-forward safe.
+
+    A team's raw HFA is (mean margin when home − mean margin when away) / 2; the
+    construction cancels team quality and leaves the home/venue/travel effect.
+    Each raw estimate is empirical-Bayes shrunk toward `league_hfa` (small samples
+    are noisy — ~8-9 home games/season) and clamped. Returns {team: hfa}; teams
+    with no prior history are omitted (caller falls back to league_hfa).
+    """
+    if schedule_df is None or schedule_df.empty:
+        return {}
+    g = schedule_df[
+        schedule_df["home_score"].notna()
+        & schedule_df["away_score"].notna()
+        & (schedule_df["season"] < before_season)
+    ]
+    if g.empty:
+        return {}
+    margin = (g["home_score"] - g["away_score"]).astype(float)
+    lo, hi = clamp
+    out: dict[str, float] = {}
+    for team in set(g["home_team"]) | set(g["away_team"]):
+        home_m = margin[g["home_team"] == team]
+        away_m = -margin[g["away_team"] == team]   # team's margin when away
+        if home_m.empty or away_m.empty:
+            continue
+        raw = (home_m.mean() - away_m.mean()) / 2.0
+        n = len(home_m) + len(away_m)
+        shrunk = league_hfa + (raw - league_hfa) * (n / (n + k))
+        out[team] = float(min(hi, max(lo, shrunk)))
+    return out
+
+
+def _home_field_points(home_team: str, season: int, data: dict) -> float:
+    """Home-field margin (points) to add to the home team for this game, per
+    data["home_field"] mode. "team" mode computes the walk-forward per-team map
+    once per season and caches it on the data dict."""
+    mode = data.get("home_field", DEFAULT_HOME_FIELD)
+    if mode == "none":
+        return 0.0
+    if mode == "league":
+        return LEAGUE_HFA
+    # "team": lazily compute + cache the per-season HFA map (walk-forward).
+    cache = data.setdefault("_team_hfa_cache", {})
+    if season not in cache:
+        cache[season] = compute_team_hfa(data.get("schedule"), before_season=season)
+    return float(cache[season].get(home_team, LEAGUE_HFA))
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -287,6 +348,13 @@ def project_game(
                      POINTS_CALIBRATION_PER_TEAM if DEFAULT_CALIBRATE else 0.0)
     home_score = production_to_points(home_prod) + calib
     away_score = production_to_points(away_prod) + calib
+
+    # Home-field advantage: total-preserving margin shift (home +h/2, away -h/2),
+    # so it moves margin / SU / win-prob but leaves the calibrated total alone.
+    hfa = _home_field_points(home_team, season, data)
+    home_score += hfa / 2.0
+    away_score -= hfa / 2.0
+
     margin = home_score - away_score
     total = home_score + away_score
 

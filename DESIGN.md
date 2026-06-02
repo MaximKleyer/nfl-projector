@@ -869,6 +869,55 @@ winner's score green / loser's red.)
 
 ---
 
+## 14. Home-field advantage
+
+> **Status: implemented & production default (2026-06-02).**
+
+The bottom-up engine takes no home/away input, so it carried **essentially zero
+home-field advantage**: across 2023-2025 it predicted the home team to win only
+48.0% of games while home teams actually won 54.2%, and the home-margin bias was
+**+2.30 pts** (the model systematically under-credited the host). League HFA is
+real and stable — 2021-2025 averages a **+2.25** home margin (.545 home-win rate).
+
+**Per-team HFA.** Each team's HFA is estimated from completed games *strictly
+before* the target season (walk-forward) as `(mean margin when home − mean margin
+when away) / 2` — a construction that cancels team quality and isolates the
+venue/travel/crowd effect. Each raw estimate is **empirical-Bayes shrunk** toward
+the league value (`LEAGUE_HFA`=2.0) with a large prior (`HFA_SHRINKAGE_GAMES`=50)
+and **clamped** to `HFA_CLAMP`=[0.5, 3.0]. The heavy shrinkage is deliberate: with
+only ~8-9 home games/season a raw per-team estimate has SE ≈ ±1.5 pt (the tell:
+SEA and BAL — two famous home venues — sit near the *bottom* of the raw splits,
+which is small-sample noise), so per-team is a gentle tilt around the league
+value, not a free-for-all. Computed in `game.py:compute_team_hfa`, cached per
+season on the `data` dict. Top tilts (2025, from 2021-2024): CLE/DEN/CHI/MIA
+capped at 3.0, DET 2.9, …, SEA 1.04, WAS 0.95, ARI 0.78.
+
+**Application — total-preserving margin shift.** `game.py` adds `+h/2` to the home
+score and `−h/2` to the away score, where `h` is the home team's HFA. This shifts
+**margin / SU / win-prob** while leaving the **total (and O/U) untouched** — so it
+doesn't disturb the §13 total calibration. Mode is set per-run via
+`data["home_field"]` ∈ {`none`, `league`, `team`} (CLI `--home-field`).
+
+**A/B (816 games, 2023-2025, production roster/TD/calib) — `team` is the default:**
+
+| home_field | SU | ATS | O/U | margin MAE | total MAE | home-margin bias |
+|------------|----|----|-----|-----------|-----------|------------------|
+| none | 62.2% | 50.2% | 49.6% | 10.45 | 10.61 | +2.30 |
+| league (~2.0) | 62.9% | 49.5% | 49.6% | 10.39 | 10.61 | +0.30 |
+| **team** | **63.8%** | 49.3% | 49.6% | 10.40 | 10.61 | **+0.26** |
+
+Adding HFA lifts SU +1.6 pts and nearly zeroes the home-margin bias; **total MAE
+and O/U are identical across all three**, confirming the shift is total-preserving
+by construction. Per-team beats flat league on SU (+0.9) at no cost, with the edge
+concentrated in 2024-25 (more derivation data); 2023 derives HFA from just
+2021-22 and is the one season where flat league edges it. ATS dips ~0.7 pt, within
+noise at break-even (Vegas already prices HFA; ATS isn't the model's edge).
+Defaults: `DEFAULT_HOME_FIELD="team"`. A/B the others via
+`backtest --home-field none|league`. This addresses the win-prob calibration gap
+found earlier (model under-confident on home teams) at its source.
+
+---
+
 ## Ingestion notes
 
 - **Washington 2021:** the v0.5 ingestion package (`nfl_projector/utils.py`,
