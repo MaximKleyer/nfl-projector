@@ -741,6 +741,22 @@ In rough priority order:
 ## 12. Snap-share roster & injury-aware recency
 
 > **Status: IMPLEMENTED & VALIDATED (2026-05-31).** Built behind a `roster_mode` switch and now the default (`DEFAULT_ROSTER_MODE = "snaps"`). A/B results, the rush-volume-ceiling fix found during validation, and final knob values are in §12.8.
+>
+> **Update (2026-06-04) — depth-chart-FIRST membership.** Selection now *leads with
+> the current depth chart* for membership, with snap share refining the order and
+> feeding projections (`roster.py:select_roster_from_snaps`). The original
+> snaps-primary selection had no "still on the team" gate, so for a future season
+> or a season opener — when there are no current-season snaps — it resurrected
+> departed players from 2021-2025 snap history (e.g. a 2026 KC roster showing
+> Tyreek Hill, or DEN showing Latavius Murray / Melvin Gordon) and buried the real
+> starter beneath them. Fix: the depth chart (which knows *who is on the team*; its
+> stated-playing-time weakness is exactly what snaps fix) defines the candidate
+> set; snap share over each player's last N active games orders them (a no-snap
+> rookie/FA is seeded by depth-chart slot). Players in old snaps but absent from
+> the current chart are dropped. The pure snaps-only path is retained as a fallback
+> for when no chart exists. Backtest 2023-2025: **neutral-to-better** — margin MAE
+> 10.398→10.299, total MAE 10.61→10.542, ATS 49.3→49.9%, SU/O-U flat — while
+> fixing the 2026 / opener rosters.
 
 Replaces the static nflverse depth chart with **FPD snap share** as the basis for *who to project and at what depth*. Roster freshness is the #1 ATS driver (§10 finding #6), and snap% is an empirical, continuous measure of who actually plays rather than the depth chart's stated intent. Bonus: retires the nflverse dependency and the fragile 2025 depth-chart date-snapping.
 

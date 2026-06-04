@@ -170,14 +170,18 @@ are written to `data/processed/v2/` and depth-chart cache to `data/raw/depth_cha
 - **Cold-start limitation.** The model needs ~1 full prior season to differentiate teams. The
   first season of any data window performs near coin-flip on SU because projections fall back to
   league averages. Never trust the earliest season in the loaded window (DESIGN.md §10).
-- **Roster selection defaults to FPD snap share** (`DEFAULT_ROSTER_MODE="snaps"`, DESIGN.md §12).
-  WR/RB/FB/TE are chosen by snap% over their last N *active* games (injury-aware — fixes the old
-  bug where players returning from a 4+ week injury were dropped by the calendar activity filter);
-  returning players get a ramp discount + staleness regression. QB is resolved separately:
-  `qb_starters.yaml` override → depth-chart QB1 → injury fallthrough to QB2. The snap section
-  columns are `total/rush/pass/gl/i10/rz` (the raw FPD labels were wrong — only `total_snap_pct`
-  feeds selection). The legacy roster is still selectable via `backtest --roster-mode depth_chart`.
-- **nflverse depth charts** are still used — now for the QB path and a no-snap-history fallback
-  (`refresh-depth-charts` still applies). [data/depth_charts.py](nfl_projector_v1/data/depth_charts.py)
-  handles the 2025 schema change (dropped `week` column, near-daily snapshots) by snapping each
-  snapshot to the NFL week and keeping the latest per week — preserve that if you touch it.
+- **Roster selection is depth-chart-FIRST, snap-refined** (`DEFAULT_ROSTER_MODE="snaps"`, DESIGN.md
+  §12). The **current depth chart sets membership** (who's on the team — fixes the bug where stale
+  2021-2025 snap history resurrected departed players on future/opener rosters, e.g. Tyreek Hill on
+  2026 KC); **snap%** over each player's last N *active* games sets the depth ORDER and feeds
+  projections (a no-snap rookie/FA is seeded by depth-chart slot). Players in old snaps but absent
+  from the current chart are dropped. Injury-aware recency + ramp discount + staleness regression
+  still apply; the pure snaps-only path (`_roster_from_snaps_only`) is a fallback for when no chart
+  exists. QB resolved separately: `qb_starters.yaml` override → depth-chart QB1 → injury fallthrough.
+  Snap section columns are `total/rush/pass/gl/i10/rz` (only `total_snap_pct` feeds selection).
+  Legacy depth-chart-only path: `backtest --roster-mode depth_chart`.
+- **nflverse depth charts** drive roster membership + the QB path (`refresh-depth-charts` applies).
+  [data/depth_charts.py](nfl_projector_v1/data/depth_charts.py) handles the 2025 schema change
+  (dropped `week` column, near-daily snapshots) by snapping each snapshot to the NFL week and keeping
+  the latest per week; for a future/offseason season it serves the latest projected chart — preserve
+  that if you touch it.

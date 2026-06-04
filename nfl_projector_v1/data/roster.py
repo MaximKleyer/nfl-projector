@@ -137,7 +137,124 @@ def _return_ramp_factor(games_back: Optional[int]) -> float:
     return RETURN_RAMP_FACTORS.get(games_back, 1.0)
 
 
+# Rank seed for a depth-chart player who has NO snap history for this team
+# (rookie / free-agent signing): a snap-share-like value by depth-chart slot, so a
+# charted starter slots ahead of a retained low-snap backup but behind a proven
+# high-snap holdover. Only used for ordering, never for the projection itself.
+_PSEUDO_SNAP_BY_DC_ORDER = {1: 50.0, 2: 32.0, 3: 20.0, 4: 12.0, 5: 7.0}
+
+
 def select_roster_from_snaps(
+    team: str,
+    season: int,
+    week: int,
+    snaps_df: Optional[pd.DataFrame],
+    injuries_df: Optional[pd.DataFrame],
+    schedule_df: Optional[pd.DataFrame],
+    depth_chart: Optional[pd.DataFrame] = None,
+    n: int = RECENT_GAMES_WINDOW,
+) -> list[Player]:
+    """Depth-chart-FIRST skill roster (WR/RB/TE, FB->RB), refined by snap share.
+
+    The current depth chart establishes MEMBERSHIP — who is actually on the team
+    this season — which fixes the bug where stale snap history resurrected departed
+    players (e.g. projecting a 2026 team would pull anyone who had snaps for it
+    back to 2021). Snap share then sets the depth ORDER and feeds the projections:
+
+      1. Take the team's current depth-chart skill players (dedup by name, drop Out/IR).
+      2. For each, look up snap share over their last `n` ACTIVE team games (walk-forward).
+         - has team snaps: rank by that share; drop if below SNAP_SHARE_MIN_PCT
+           (on the chart but a known low-usage player — the §12 threshold).
+         - no team snaps (rookie / new signing): rank by a depth-chart-slot seed,
+           and project from the player's own cross-team history downstream.
+      3. Rank within position by that key, cap by SNAP_ROSTER_CAPS, assign depth_order.
+      4. Carry team_games_missed + return_ramp_factor from snap history (§12.4/12.5).
+
+    Falls back to `_roster_from_snaps_only` when no depth chart is available.
+    """
+    if depth_chart is None or depth_chart.empty:
+        return _roster_from_snaps_only(team, season, week, snaps_df, injuries_df, schedule_df, n)
+    team_dc = depth_chart[depth_chart["team"] == team]
+    if team_dc.empty:
+        return _roster_from_snaps_only(team, season, week, snaps_df, injuries_df, schedule_df, n)
+
+    # Team snap history strictly before (season, week), grouped by normalized name.
+    snap_by_name: dict[str, pd.DataFrame] = {}
+    if snaps_df is not None and not snaps_df.empty:
+        m = (snaps_df["team_norm"] == team) & (
+            (snaps_df["season"] < season)
+            | ((snaps_df["season"] == season) & (snaps_df["week_num"] < week))
+        )
+        sh = snaps_df.loc[m, ["player_name_norm", "player_key", "season",
+                              "week_num", "total_snap_pct"]]
+        for nname, g in sh.groupby("player_name_norm", sort=False):
+            snap_by_name[nname] = g.sort_values(["season", "week_num"])
+
+    team_weeks_before = [w for w in _team_game_weeks(team, season, schedule_df) if w < week]
+
+    candidates: dict[str, list] = {"WR": [], "RB": [], "TE": []}
+    seen: set[str] = set()
+    for _, row in team_dc.sort_values("depth_order").iterrows():
+        pos = str(row["position"]).strip()
+        if pos == "FB":
+            pos = "RB"
+        if pos not in candidates:
+            continue
+        name = str(row["player_name"]).strip()
+        if not name or name.lower() == "nan":
+            continue
+        nname = normalize_name(name)
+        if nname in seen:
+            continue
+        seen.add(nname)
+        inj = _get_injury_status(name, team, season, week, injuries_df)
+        if inj in WONT_PLAY_STATUSES:
+            continue
+        dc_order = int(row["depth_order"]) if pd.notna(row.get("depth_order")) else 99
+
+        g = snap_by_name.get(nname)
+        if g is not None and not g.empty:
+            avg_snap = float(g.tail(n)["total_snap_pct"].mean())
+            if avg_snap < SNAP_SHARE_MIN_PCT:
+                continue  # on the chart but barely plays — drop (§12 threshold)
+            player_key = str(g["player_key"].iloc[-1])
+            this_season = g[g["season"] == season]
+            if this_season.empty:
+                team_games_missed, games_back = 0, None
+            else:
+                active_weeks = {int(w) for w in this_season["week_num"]}
+                last_active = max(active_weeks)
+                team_games_missed = sum(1 for w in team_weeks_before if w > last_active)
+                games_back = _games_back_index(active_weeks, team_weeks_before,
+                                               RETURN_TRIGGER_GAMES_MISSED)
+            rank_key = avg_snap
+        else:
+            player_key = None
+            team_games_missed, games_back = 0, None
+            rank_key = _PSEUDO_SNAP_BY_DC_ORDER.get(dc_order, 4.0)
+
+        candidates[pos].append({
+            "name": name, "player_key": player_key, "rank_key": rank_key,
+            "dc_order": dc_order, "injury_status": inj,
+            "team_games_missed": team_games_missed, "ramp": _return_ramp_factor(games_back),
+        })
+
+    out: list[Player] = []
+    for pos, plist in candidates.items():
+        # primary: snap-share / seed (desc); tiebreak: depth-chart order (asc)
+        plist.sort(key=lambda p: (p["rank_key"], -p["dc_order"]), reverse=True)
+        cap = SNAP_ROSTER_CAPS.get(pos, len(plist))
+        for depth, p in enumerate(plist[:cap], start=1):
+            out.append(Player(
+                name=p["name"], team=team, position=pos, depth_order=depth,
+                injury_status=p["injury_status"],
+                team_games_missed=p["team_games_missed"],
+                return_ramp_factor=p["ramp"], player_key=p["player_key"],
+            ))
+    return out
+
+
+def _roster_from_snaps_only(
     team: str,
     season: int,
     week: int,
@@ -146,7 +263,13 @@ def select_roster_from_snaps(
     schedule_df: Optional[pd.DataFrame],
     n: int = RECENT_GAMES_WINDOW,
 ) -> list[Player]:
-    """Select WR/RB/TE (FB folded into RB) from snap share.
+    """Snaps-only roster (no depth chart available) — the fallback path.
+
+    Select WR/RB/TE (FB folded into RB) purely from snap share. Used only when no
+    depth chart is available; the primary path is depth-chart-first
+    (`select_roster_from_snaps`). NOTE: with no roster gate this can include
+    players who have since left the team, which is exactly why the depth-chart-first
+    path is preferred — see DESIGN.md §12.
 
     For each player on the team with snap history strictly before (season, week):
       - average total_snap_pct over their last n ACTIVE games (games played),
@@ -220,49 +343,6 @@ def select_roster_from_snaps(
                 injury_status=p["injury_status"],
                 team_games_missed=p["team_games_missed"],
                 return_ramp_factor=p["ramp"], player_key=p["player_key"],
-            ))
-    return out
-
-
-def _depth_chart_fallback(
-    team: str,
-    season: int,
-    week: int,
-    depth_chart: Optional[pd.DataFrame],
-    injuries_df: Optional[pd.DataFrame],
-    snap_norm_names: set[str],
-    by_pos_base_depth: dict[str, int],
-) -> list[Player]:
-    """Add depth-chart skill players with NO snap history at all (rookie debuts,
-    fresh call-ups). Players who appear in snaps but fell below the threshold are
-    intentionally excluded — their low snap share is the signal to leave them out.
-    """
-    out: list[Player] = []
-    if depth_chart is None or depth_chart.empty:
-        return out
-    team_dc = depth_chart[depth_chart["team"] == team]
-    if team_dc.empty:
-        return out
-    for pos in ("WR", "RB", "TE"):
-        limit = ROSTER_DEPTH_LIMITS.get(pos, 0)
-        pos_dc = (
-            team_dc[team_dc["position"] == pos]
-            .sort_values("depth_order")
-            .head(limit)
-        )
-        extra = 0
-        base = by_pos_base_depth.get(pos, 0)
-        for _, row in pos_dc.iterrows():
-            name = str(row["player_name"]).strip()
-            if not name or normalize_name(name) in snap_norm_names:
-                continue
-            inj = _get_injury_status(name, team, season, week, injuries_df)
-            if inj in WONT_PLAY_STATUSES:
-                continue
-            extra += 1
-            out.append(Player(
-                name=name, team=team, position=pos,
-                depth_order=base + extra, injury_status=inj,
             ))
     return out
 
@@ -350,22 +430,10 @@ def get_active_roster(
     roster_mode="depth_chart": the legacy nflverse-depth-chart selection.
     """
     if roster_mode == "snaps":
+        # Depth-chart-first: the chart sets membership; snap share refines order +
+        # feeds projections (and a snaps-only fallback if no chart). DESIGN.md §12.
         skill = select_roster_from_snaps(
-            team, season, week, snaps_df, injuries_df, schedule_df
-        )
-        # Normalized snap names for the team (for the "no snap history" fallback test)
-        snap_norm_names: set[str] = set()
-        if snaps_df is not None and not snaps_df.empty:
-            m = (snaps_df["team_norm"] == team) & (
-                (snaps_df["season"] < season)
-                | ((snaps_df["season"] == season) & (snaps_df["week_num"] < week))
-            )
-            snap_norm_names = set(snaps_df.loc[m, "player_name_norm"])
-        by_pos_base = {}
-        for p in skill:
-            by_pos_base[p.position] = max(by_pos_base.get(p.position, 0), p.depth_order)
-        skill += _depth_chart_fallback(
-            team, season, week, depth_chart, injuries_df, snap_norm_names, by_pos_base
+            team, season, week, snaps_df, injuries_df, schedule_df, depth_chart,
         )
         qb = resolve_qb(team, season, week, depth_chart, injuries_df, qb_starters)
         return ([qb] if qb is not None else []) + skill
