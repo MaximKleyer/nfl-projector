@@ -328,7 +328,6 @@ def _project_one_team(
         project_receiver_line(
             receiver=r, opponent=opponent, season=season, week=week,
             recv_history=data["recv_history"],
-            recv_defense=data.get("recv_defense"),
             injuries_df=data.get("injuries"),
         )
         for r in receivers

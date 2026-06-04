@@ -585,6 +585,20 @@ receiving table (which is why `RBProjection` now carries receiving stats).
 
 If/when any of these prove necessary after v1 backtests, they're easy to add.
 
+**Receiver-level (coverage) defense — investigated & deliberately NOT used
+(2026-06-04).** Opposing pass defense is applied once, on the QB's YPA (`qb.py`);
+opposing rush defense on the RB's YPC (`rb.py`). A receiver-level matchup was
+*also* coded in `wr_te.py` but (a) referenced a non-existent column (`def_yprr`
+vs the real `def_yprr_allowed`) so it silently returned 1.0, and (b) would have
+cancelled anyway — a uniform per-receiver factor washes out in `team.py`'s
+normalized allocation, and the team pass total is the QB anchor. A diagnostic
+confirmed it adds nothing: the receiving table's `def_ypt_allowed` correlates
+**0.965** with the QB's `def_ypa` and contributes **+0.0000** incremental R² of
+pass-yards residual; the TE-funnel proxy correlates **+0.02** with TE yard share
+(no positional signal). The dead code was removed; the `advanced_receiving_def`
+table stays in the warehouse for possible future use. Lesson (same as per-team FG
+§11 #5): check the *residual* signal before wiring a richer-looking data source.
+
 ---
 
 ## 6. Backtest protocol (explicit)

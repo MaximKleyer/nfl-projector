@@ -35,7 +35,6 @@ from ..data.roster import Player
 from .base import (
     weighted_recent_average,
     blend_with_baseline,
-    opponent_factor,
     injury_factor,
     staleness_factor,
 )
@@ -108,44 +107,14 @@ def _recv_history_up_to_week(
     return recv_history[mask].sort_values(["season", "week_num"])
 
 
-def _opp_recv_def_recent(
-    opponent: str,
-    season: int,
-    week: int,
-    recv_defense: pd.DataFrame,
-    stat: str,
-    n_recent: int = 4,
-) -> Optional[float]:
-    """Average of opponent's receiving-defense stat over recent games."""
-    if recv_defense is None or recv_defense.empty or stat not in recv_defense.columns:
-        return None
-    mask = (recv_defense["team_norm"] == opponent) & (
-        (recv_defense["season"] < season)
-        | ((recv_defense["season"] == season) & (recv_defense["week_num"] < week))
-    )
-    games = recv_defense[mask].sort_values(["season", "week_num"]).tail(n_recent)
-    values = games[stat].dropna()
-    if values.empty:
-        return None
-    return float(values.mean())
-
-
-def _league_recv_def_avg(
-    recv_defense: pd.DataFrame,
-    season: int,
-    week: int,
-    stat: str,
-) -> Optional[float]:
-    """League-wide avg of a receiving-defense stat as of this week."""
-    if recv_defense is None or recv_defense.empty or stat not in recv_defense.columns:
-        return None
-    mask = (recv_defense["season"] < season) | (
-        (recv_defense["season"] == season) & (recv_defense["week_num"] < week)
-    )
-    values = recv_defense[mask][stat].dropna()
-    if values.empty:
-        return None
-    return float(values.mean())
+# NOTE: there is intentionally NO receiver-level (coverage) defense matchup here.
+# A diagnostic (2026-06-04) showed the receiving-defense table is redundant: its
+# per-target metric (def_ypt_allowed) correlates 0.965 with the QB's def_ypa
+# matchup and adds +0.0000 R2 of pass-yards-residual on top of it, and there is no
+# positional signal (TE-funnel proxy correlates +0.02 with TE yard share). It also
+# CANCELS structurally — a uniform per-receiver factor washes out in team.py's
+# allocation, and the team pass total is the QB anchor anyway. Opposing pass
+# defense is applied once, where it belongs: the QB's YPA (qb.py). DESIGN.md §5.
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +127,6 @@ def project_receiver_line(
     season: int,
     week: int,
     recv_history: pd.DataFrame,
-    recv_defense: Optional[pd.DataFrame] = None,
     injuries_df: Optional[pd.DataFrame] = None,
 ) -> ReceiverProjection:
     """Project this receiver's target share + efficiency for the game.
@@ -166,6 +134,9 @@ def project_receiver_line(
     Returns a ReceiverProjection with target_share, ypt, catch_rate.
     receiving_yards and receptions remain 0.0 here; team.py fills them in
     when allocating the QB's pass yards across the receiver pool.
+
+    No coverage-defense matchup is applied — it's redundant with the QB's
+    pass-defense matchup and cancels in allocation (see module note / DESIGN §5).
     """
     hist = _recv_history_up_to_week(receiver.name, season, week, recv_history)
     n_games = len(hist)
@@ -191,24 +162,15 @@ def project_receiver_line(
     ypt = _project_stat("ypt", LEAGUE_AVG_RECV_YPT)
     catch_rate = _project_stat("catch_rate", LEAGUE_AVG_RECV_CATCH_RATE)
 
-    # Opponent matchup — most directly relevant: yards per route run allowed.
-    # We use a soft adjustment on target_share (some defenses funnel volume
-    # to specific receivers) and a fuller one on ypt.
-    opp_yprr = _opp_recv_def_recent(opponent, season, week, recv_defense, "def_yprr")
-    league_yprr = _league_recv_def_avg(recv_defense, season, week, "def_yprr")
-    matchup_ypt = opponent_factor(opp_yprr, league_yprr)
-    # Target share isn't really a defensive function — keep neutral
-    matchup_share = 1.0
-
     inj = injury_factor(receiver.name, receiver.team, season, week, injuries_df)
 
-    # Combine. Return-game ramp applies to VOLUME only (target_share) — a just-
-    # returned receiver gets a smaller share of targets, not worse efficiency.
+    # Combine (injury only; pass-defense is applied once, on the QB's YPA — see
+    # module note). Return-game ramp applies to VOLUME only (target_share) — a
+    # just-returned receiver gets a smaller share of targets, not worse efficiency.
     # Ramping target_share BEFORE team.py allocation shrinks his slice and
     # redistributes to teammates, preserving the pass-yards-sum invariant (§12.4).
-    target_share = target_share * matchup_share * inj * receiver.return_ramp_factor
-    ypt = ypt * matchup_ypt * inj
-    # catch_rate has small matchup effect; just apply injury
+    target_share = target_share * inj * receiver.return_ramp_factor
+    ypt = ypt * inj
     catch_rate = catch_rate * inj
 
     return ReceiverProjection(
@@ -223,5 +185,5 @@ def project_receiver_line(
         receptions=0.0,
         n_recent_games=min(n_games, 4),
         health_multiplier=round(inj, 3),
-        matchup_multiplier=round(matchup_ypt, 3),
+        matchup_multiplier=1.0,
     )
