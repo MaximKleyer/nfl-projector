@@ -63,6 +63,10 @@ class GamePrediction:
     ou_pick: Optional[str] = None               # "OVER" or "UNDER"
     ou_prob: Optional[float] = None             # probability of that pick
 
+    # Situational ATS overlay (separate from the model; DESIGN.md §16)
+    situational_ats_pick: Optional[str] = None   # team to bet ATS, or None
+    situational_ats_reason: Optional[str] = None # which signal(s) fired
+
     # Full team production for interpretation
     home_production: Optional[TeamProduction] = None
     away_production: Optional[TeamProduction] = None
@@ -433,6 +437,11 @@ def project_game(
             ou_pick = "UNDER"
             ou_prob = 1.0 - over_p
 
+    # Situational ATS overlay — independent of the model's margin/SU; only an
+    # against-the-spread lean from validated market biases (DESIGN.md §16).
+    from .situational import situational_ats_lean
+    sit_pick, sit_reason = situational_ats_lean(home_team, away_team, spread_close)
+
     return GamePrediction(
         home_team=home_team,
         away_team=away_team,
@@ -451,6 +460,8 @@ def project_game(
         ats_prob=round(ats_prob, 3) if ats_prob is not None else None,
         ou_pick=ou_pick,
         ou_prob=round(ou_prob, 3) if ou_prob is not None else None,
+        situational_ats_pick=sit_pick,
+        situational_ats_reason=sit_reason,
         home_production=home_prod,
         away_production=away_prod,
     )

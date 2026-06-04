@@ -976,6 +976,55 @@ uncorrected over-projection in 10+ mph games.
 
 ---
 
+## 16. Situational ATS overlay (key-number favorite fade)
+
+> **Status: implemented & tracked (2026-06-04).** The model's own ATS picks have
+> no edge (~49%) because it never sees the line. This overlay is the one place a
+> real against-the-spread lean is expressed, and it's kept SEPARATE from the model
+> — score / margin / SU / win-prob are untouched.
+
+ATS/O-U are a different problem from SU: they're about beating the closing line
+(the sharpest forecast in sports), not ranking teams. A model-vs-line diagnostic
+confirmed the model has no edge from its own margins — even its strongest
+disagreements with the spread hit only ~52% (break-even). So ATS edge, if any,
+must come from documented MARKET biases the line carries, not from the model.
+
+**The experiment.** Three pre-specified, literature-backed situational signals
+were tested, fit on 2021-2023 and validated on untouched 2024-2025:
+
+| signal (back the dog / non-bye) | OOS test 24-25 | full backtest 23-25, isolated |
+|---------------------------------|----------------|-------------------------------|
+| fade 7-9.5 favorite | 59.8% | **57.6%** (n=118) |
+| division dog | 53.8% | 46.4% |
+| fade the bye | 57.6% | 46.3% |
+
+All three nominally cleared the 52.4% vig break-even OOS, but a per-signal
+breakdown **dissolved two of them**: division-dog and fade-bye hit only ~46% in
+isolation — their OOS "wins" came from overlap with the mid-fav fade (division
+dogs that were also 7-9.5 dogs hit 60.8%) plus small-sample noise. Only the
+**key-number favorite fade** survived every cut: raw diagnostic 55.9%, OOS test
+59.8%, full backtest 57.6%, and — critically — **above break-even in all three
+seasons** (2023 51.5%, 2024 56.1%, 2025 63.6%), unlike the combined overlay which
+sank to 46% in 2023.
+
+**The signal (`situational.py`).** When the favorite lays a touchdown to 9.5
+(`|spread_close|` in [7, 9.5]), lean the underdog ATS (~39 plays/season) — the
+well-documented key-number effect (favorites in the TD-to-9.5 range are
+systematically over-priced). Computed purely from the Vegas spread, stored on
+`GamePrediction.situational_ats_pick/reason`, surfaced in `predict` (+ CSV), and
+**tracked as its own `sit_ats_accuracy` line in the backtest** so it keeps being
+validated. It does NOT touch the model: with the overlay on, SU 63.8% / ATS 49.3%
+/ O-U 49.9% / margin MAE 10.40 are byte-for-byte unchanged.
+
+**Honest caveat.** n is thin (~118 over three seasons), so 57.6% is only ~1 SE
+above break-even — not statistically "proven"; market biases also decay as books
+sharpen. The evidence is the *consistency* across every independent cut, not the
+sample size. Treat it as a modest, selective edge to bet and keep monitoring, not
+a guarantee. The dropped division-dog / fade-bye signals are recorded here so
+they aren't naively re-attempted.
+
+---
+
 ## Ingestion notes
 
 - **Washington 2021:** the v0.5 ingestion package (`nfl_projector/utils.py`,

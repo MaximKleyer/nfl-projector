@@ -200,6 +200,9 @@ def cmd_predict(args: argparse.Namespace) -> int:
             continue
         predictions.append(pred)
         print("  " + _format_game_line(pred))
+        if pred.situational_ats_pick:
+            print(f"        ^ situational ATS lean: {pred.situational_ats_pick} "
+                  f"({pred.situational_ats_reason})")
         if args.players:
             _print_player_block(pred)
 
@@ -221,6 +224,8 @@ def cmd_predict(args: argparse.Namespace) -> int:
             "ats_prob": pred.ats_prob,
             "ou_pick": pred.ou_pick,
             "ou_prob": pred.ou_prob,
+            "situational_ats_pick": pred.situational_ats_pick,
+            "situational_ats_reason": pred.situational_ats_reason,
         })
 
     # Write CSV

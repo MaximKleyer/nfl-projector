@@ -80,6 +80,21 @@ def _grade_prediction(
                 or (pred.ats_pick == pred.away_team and not home_covered)
             )
 
+    # Situational ATS overlay: grade the lean the same way as ATS (independent
+    # of the model's pick). None when no signal fired or no line.
+    sit_correct = None
+    sit_push = 0
+    if pred.spread_close is not None and pred.situational_ats_pick is not None:
+        adjusted_margin = actual_margin + pred.spread_close
+        if adjusted_margin == 0:
+            sit_push = 1
+        else:
+            home_covered = adjusted_margin > 0
+            sit_correct = int(
+                (pred.situational_ats_pick == pred.home_team and home_covered)
+                or (pred.situational_ats_pick == pred.away_team and not home_covered)
+            )
+
     # O/U: did we get the right side
     ou_correct = None
     ou_push = 0
@@ -117,6 +132,10 @@ def _grade_prediction(
         "ats_pick": pred.ats_pick,
         "ats_correct": ats_correct,
         "ats_push": ats_push,
+        "situational_ats_pick": pred.situational_ats_pick,
+        "situational_ats_reason": pred.situational_ats_reason,
+        "situational_ats_correct": sit_correct,
+        "situational_ats_push": sit_push,
         "ou_pick": pred.ou_pick,
         "ou_correct": ou_correct,
         "ou_push": ou_push,
@@ -156,6 +175,17 @@ def _summarize(residuals: pd.DataFrame, label: str = "all") -> dict:
     ou_accuracy = float(ou_played["ou_correct"].mean()) if len(ou_played) > 0 else None
     ou_n = len(ou_played)
 
+    # Situational ATS overlay accuracy (only the games where a lean fired)
+    sit_acc = None
+    sit_n = 0
+    if "situational_ats_correct" in residuals.columns:
+        sit_played = residuals[
+            residuals["situational_ats_correct"].notna()
+            & (residuals.get("situational_ats_push", 0) == 0)
+        ]
+        sit_n = len(sit_played)
+        sit_acc = float(sit_played["situational_ats_correct"].mean()) if sit_n > 0 else None
+
     return {
         "label": label,
         "n_games": n_games,
@@ -169,6 +199,8 @@ def _summarize(residuals: pd.DataFrame, label: str = "all") -> dict:
         "ats_accuracy": round(ats_accuracy, 4) if ats_accuracy is not None else None,
         "ou_n": ou_n,
         "ou_accuracy": round(ou_accuracy, 4) if ou_accuracy is not None else None,
+        "sit_ats_n": sit_n,
+        "sit_ats_accuracy": round(sit_acc, 4) if sit_acc is not None else None,
     }
 
 

@@ -64,10 +64,15 @@ The model's edge is straight-up winners and margin (64% SU). O/U stays near
 coin-flip — totals are the hardest market — but the systematic under-bias is
 calibrated out and efficient offenses are no longer under-projected. The
 per-team home-field term lifted SU +1.6 pts and nearly zeroed the home-margin
-bias the bottom-up engine carried (it had ~zero built-in HFA). ATS sits just
-under break-even — never the model's edge (Vegas prices HFA). Build history:
+bias the bottom-up engine carried (it had ~zero built-in HFA). The model's own
+blanket ATS sits just under break-even — beating the closing line isn't what a
+bottom-up model does. The one real spread edge is a **situational overlay**
+(`DESIGN.md` §16): fading favorites laying 7-9.5 hits **57.6%** on a selective
+~39 plays/season (above break-even in 2023, 2024, and 2025), tracked separately
+and surfaced via `predict` without touching the model's scores. Build history:
 snap-share roster (`DESIGN.md` §12), per-team TD conversion + calibration (§13),
-per-team home-field advantage (§14).
+per-team home-field advantage (§14), dome total adjustment (§15), situational ATS
+overlay (§16).
 
 **Known limitation:** the model needs ~1 full prior season of data to perform.
 The first season of the data window — now **2021** (no 2019-2020 priors) — sits near
@@ -133,6 +138,7 @@ nfl_projector_v1/
   cli.py                 command-line interface
   game.py                game orchestrator → GamePrediction (+ home-field shift)
   season.py              full-season projection → standings + div/playoff odds
+  situational.py         situational ATS overlay (key-number favorite fade)
   backtest.py            walk-forward backtest harness
   data/
     loaders.py           warehouse → DataFrames
@@ -162,7 +168,8 @@ v1 is complete and operational, with **2021-2025 ingested**. Shipped since the
 initial build (see `DESIGN.md`): the 2021-2022 backfill that fixed the 2023
 cold-start (§10/§11), FPD snap-share rosters (§12), per-team TD conversion +
 total calibration (§13), per-team home-field advantage (§14), a dome total
-adjustment (§15), and the `predict-season` full-season projection.
+adjustment (§15), a situational ATS overlay (§16), and the `predict-season`
+full-season projection.
 
 Remaining planned enhancements (`DESIGN.md` §11): game-script awareness for
 backup-QB over-projection, a cross-time team comparison command, and QB

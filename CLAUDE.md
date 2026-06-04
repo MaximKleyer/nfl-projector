@@ -131,6 +131,13 @@ more multiplicative blocks (DESIGN.md §5).
   so it moves O/U but not margin/SU/ATS. Corrects a measured conditional total bias (the model
   under-projects domes). `DEFAULT_ENVIRONMENT="dome"`; `--environment none` to disable. Wind/temp
   are deliberately unused (wind has no live forecast feed; temp is noise). See DESIGN.md §15.
+- **Situational ATS overlay** (`situational.py`, DESIGN.md §16). The model never sees the line,
+  so its own ATS picks have no edge (~49%). The overlay is a SEPARATE against-the-spread lean —
+  it does NOT touch score/margin/SU. Only one signal survived OOS + full-backtest validation:
+  the **key-number favorite fade** (favorite laying 7-9.5 → back the dog), ~57.6% on ~39
+  plays/season. Stored on `GamePrediction.situational_ats_pick/reason`, shown in `predict`, and
+  tracked as `sit_ats_accuracy` in the backtest summary. Division-dog and fade-bye were tested
+  and dropped (~46% isolated) — don't re-add them naively.
 
 ### Vegas lines
 
