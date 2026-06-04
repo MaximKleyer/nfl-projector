@@ -103,6 +103,9 @@ python scripts/build_database.py --seasons 2021 2022 2023 2024 2025
 # Predict every game in a week (prints + writes a CSV)
 python -m nfl_projector_v1 predict --season 2025 --week 16
 
+# ...with each game's per-player stat-line projections (prints + player CSV)
+python -m nfl_projector_v1 predict --season 2025 --week 16 --players
+
 # Project a full season: per-team expected wins + division/playoff odds
 python -m nfl_projector_v1 predict-season --season 2026
 

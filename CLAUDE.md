@@ -29,6 +29,7 @@ python -m nfl_projector_v1 status
 
 # Predict every game in a week (prints a table + writes a CSV). Works for future weeks.
 python -m nfl_projector_v1 predict --season 2025 --week 16
+python -m nfl_projector_v1 predict --season 2025 --week 16 --players   # + per-player stat lines + player CSV
 
 # Project a full season: per-team expected wins + Monte Carlo division/playoff odds
 python -m nfl_projector_v1 predict-season --season 2026

@@ -91,6 +91,77 @@ def _format_game_line(pred) -> str:
     return f"{matchup:14s} {score} | {su:18s} {ats:10s} {ou}"
 
 
+# ---------------------------------------------------------------------------
+# Per-player projection view (predict --players)
+# ---------------------------------------------------------------------------
+
+def _player_rows(pred) -> list[dict]:
+    """Flatten a GamePrediction's per-player projections (both teams) into rows
+    for a CSV. One row per projected player (QB / each RB / each WR-TE)."""
+    out = []
+    game = f"{pred.away_team}@{pred.home_team}"
+    for prod, ha in ((pred.away_production, "away"), (pred.home_production, "home")):
+        if prod is None:
+            continue
+        base = dict(season=pred.season, week=pred.week, game=game,
+                    team=prod.team, opponent=prod.opponent, home_away=ha)
+        qb = prod.qb_projection
+        if qb is not None:
+            out.append({**base, "position": "QB", "depth": 1, "player": qb.name,
+                        "pass_att": round(qb.pass_attempts, 1),
+                        "completions": round(qb.completions, 1),
+                        "pass_yds": round(qb.pass_yards, 1),
+                        "ypa": round(qb.ypa, 2),
+                        "interceptions": round(qb.interceptions, 2),
+                        "sacks": round(qb.sack_count, 1),
+                        "scramble_yds": round(qb.scramble_yards, 1)})
+        for rb in prod.rb_projections:
+            out.append({**base, "position": "RB",
+                        "depth": getattr(rb, "depth_order", None), "player": rb.name,
+                        "carries": round(rb.carries, 1),
+                        "ypc": round(rb.ypc, 2),
+                        "rush_yds": round(rb.rush_yards, 1),
+                        "target_share_pct": round(rb.target_share, 1),
+                        "ypt": round(rb.ypt, 2),
+                        "receptions": round(rb.receptions, 1),
+                        "rec_yds": round(rb.receiving_yards, 1)})
+        for r in prod.receiver_projections:
+            out.append({**base, "position": r.position, "player": r.name,
+                        "target_share_pct": round(r.target_share, 1),
+                        "ypt": round(r.ypt, 2),
+                        "catch_rate": round(r.catch_rate, 1),
+                        "receptions": round(r.receptions, 1),
+                        "rec_yds": round(r.receiving_yards, 1)})
+    return out
+
+
+def _print_player_block(pred) -> None:
+    """Print a readable per-player breakdown for one game (both teams)."""
+    print(f"\n  {pred.away_team} {pred.predicted_away_score:.1f} @ "
+          f"{pred.home_team} {pred.predicted_home_score:.1f}   "
+          f"(total {pred.predicted_total:.1f})")
+    for prod in (pred.away_production, pred.home_production):
+        if prod is None:
+            continue
+        print(f"    {prod.team} vs {prod.opponent}  "
+              f"[pass {prod.pass_yards:.0f} / rush {prod.rush_yards:.0f} yds, "
+              f"~{prod.total_tds_implied:.1f} TD, {prod.field_goals:.1f} FG]")
+        qb = prod.qb_projection
+        if qb is not None:
+            print(f"      QB  {qb.name:20s} {qb.pass_attempts:5.1f} att "
+                  f"{qb.completions:5.1f} cmp {qb.pass_yards:6.0f} yds {qb.ypa:5.1f} ypa "
+                  f"{qb.interceptions:4.1f} INT {qb.scramble_yards:4.0f} scrm")
+        for rb in prod.rb_projections:
+            print(f"      RB  {rb.name:20s} {rb.carries:5.1f} car "
+                  f"{rb.rush_yards:6.0f} yds {rb.ypc:5.1f} ypc | "
+                  f"{rb.target_share:4.1f}% tgt {rb.receiving_yards:5.0f} rec "
+                  f"{rb.receptions:4.1f} rec")
+        for r in prod.receiver_projections:
+            print(f"      {r.position:<2s}  {r.name:20s} {r.target_share:4.1f}% tgt "
+                  f"{r.receiving_yards:6.0f} rec yds {r.receptions:5.1f} rec "
+                  f"{r.ypt:5.1f} ypt")
+
+
 def cmd_predict(args: argparse.Namespace) -> int:
     """Predict all games in a given (season, week)."""
     from .data.loaders import load_all
@@ -129,6 +200,8 @@ def cmd_predict(args: argparse.Namespace) -> int:
             continue
         predictions.append(pred)
         print("  " + _format_game_line(pred))
+        if args.players:
+            _print_player_block(pred)
 
         rows.append({
             "season": season,
@@ -156,6 +229,20 @@ def cmd_predict(args: argparse.Namespace) -> int:
     out_path = out_dir / f"predictions_{season}_week{week:02d}.csv"
     pd.DataFrame(rows).to_csv(out_path, index=False)
     print(f"\nWrote {len(rows)} predictions to:\n  {out_path}")
+
+    # Per-player projections CSV (one row per projected player), when --players.
+    if args.players:
+        prows = [r for pred in predictions for r in _player_rows(pred)]
+        if prows:
+            cols = ["season", "week", "game", "team", "opponent", "home_away",
+                    "position", "depth", "player", "pass_att", "completions",
+                    "pass_yds", "ypa", "interceptions", "sacks", "scramble_yds",
+                    "carries", "ypc", "rush_yds", "target_share_pct", "ypt",
+                    "catch_rate", "receptions", "rec_yds"]
+            pdf = pd.DataFrame(prows).reindex(columns=cols)
+            p_path = out_dir / f"player_projections_{season}_week{week:02d}.csv"
+            pdf.to_csv(p_path, index=False)
+            print(f"Wrote {len(prows)} player projections to:\n  {p_path}")
 
     return 0
 
@@ -325,6 +412,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Where to write the predictions CSV (default: config output dir)")
     p_pred.add_argument("--home-field", choices=["none", "league", "team"], default=DEFAULT_HOME_FIELD,
                         help=f"Home-field advantage: off, flat league, or per-team (default {DEFAULT_HOME_FIELD})")
+    p_pred.add_argument("--players", action="store_true",
+                        help="Also print each game's per-player projections and write a player_projections CSV")
     p_pred.set_defaults(func=cmd_predict)
 
     # predict-season
