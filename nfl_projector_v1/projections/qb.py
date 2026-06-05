@@ -201,22 +201,23 @@ def project_qb_line(
         return opponent_factor(opp_recent, league)
 
     matchup_ypa = _matchup("def_ypa")
-    matchup_attempts = _matchup("def_pass_att")
     matchup_cmp = _matchup("def_cmp_pct")
     matchup_sacks = _matchup("def_sack_pct")
-    # For yards, the multiplier is BOTH attempts AND ypa — but applying both
-    # would double-count the defensive effect. Use ypa-allowed only, since
-    # passing attempts are mostly driven by GAME SCRIPT, not by defense.
+    # Pass defense acts ONCE, through YPA (efficiency). Attempts are deliberately
+    # NOT matchup-adjusted: "attempts a defense faces" (def_pass_att) is a
+    # game-script artifact (opponents trailing/leading, pace), not pass-defense
+    # quality — and applying it on top of the YPA adjustment double-counts defense
+    # in pass_yards (= attempts × ypa). So attempts come from the QB's own history.
     matchup_yards = matchup_ypa
 
     # ---- Injury factor ----
     inj = injury_factor(qb.name, qb.team, season, week, injuries_df)
 
     # ---- Combine ----
-    # Volume stat: attempts get a small matchup boost (some defenses force
-    # check-downs and short passes that inflate attempts). Return-game ramp
-    # applies to VOLUME only (§12.4); a no-op for QB as currently resolved.
-    pass_attempts = pass_attempts * matchup_attempts * inj * qb.return_ramp_factor
+    # Volume (attempts): the QB's own blended history only — NO defense matchup
+    # (see above). Return-game ramp applies to VOLUME (§12.4); a no-op for QB as
+    # currently resolved.
+    pass_attempts = pass_attempts * inj * qb.return_ramp_factor
     # Efficiency stats: completion % and YPA get full matchup treatment
     cmp_pct = cmp_pct * matchup_cmp * inj
     ypa = ypa * matchup_ypa * inj

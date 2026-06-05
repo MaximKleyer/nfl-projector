@@ -313,9 +313,14 @@ def project_qb_line(qb: Player, opponent, season, week, qb_history,
     """Project each base stat (pass_att, cmp_pct, ypa, scrambles, ints, sacks) via
     blend(weighted_recent, season) with league fallback, then apply the matchup +
     injury multipliers. History is filtered STRICTLY before (season, week) —
-    walk-forward correct. pass_yards = attempts × ypa. Per design, the yards
-    matchup uses ypa-allowed only (attempts are game-script driven, not defense).
-    TDs are NOT projected here — derived at team level (see points.py)."""
+    walk-forward correct. pass_yards = attempts × ypa. Pass defense acts ONCE,
+    on ypa (efficiency); attempts are NOT matchup-adjusted — def_pass_att is a
+    game-script artifact (pace, score), not pass-D quality, and adjusting both
+    attempts and ypa would double-count defense in pass_yards. (Corrected
+    2026-06-04: the prior code did apply a def_pass_att factor to attempts; A/B
+    over 2023-2025 → margin MAE 10.30→10.24, RMSE down, SU/O-U flat-to-better,
+    blanket ATS within noise.) TDs are NOT projected here — derived at team level
+    (see points.py)."""
     ...
 ```
 
